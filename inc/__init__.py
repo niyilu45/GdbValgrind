@@ -2,5 +2,6 @@
 from .api import DebugOptions, debug_error, export_report, serve_report
 from .core import load_report, render_html
 from .collect import collect_run
+from .workflow import analyze_run
 
-__all__ = ["DebugOptions", "load_report", "render_html", "export_report", "debug_error", "serve_report", "collect_run"]
+__all__ = ["DebugOptions", "load_report", "render_html", "export_report", "debug_error", "serve_report", "collect_run", "analyze_run"]

@@ -17,6 +17,44 @@ Python 库与调用示例：把 Valgrind XML 转成可离线打开的 HTML，按
 
 ## 库结构与示例入口
 
+### 自动变量采集：一次启动或分步执行
+
+首次收集错误时，`collect` 和不带 `--xml` 的 `analyze` 默认提供实时网页：
+
+```bash
+# 在 Linux 服务器上运行，终端会打印网页链接
+python3.9 aivalgrind.py collect --output-dir run-live -p /path/to/project --port 8765 -- /path/to/program 参数
+
+# 在本机另开终端（替换 SSH 登录地址）
+ssh -N -L 8765:127.0.0.1:8765 用户名@服务器
+```
+
+本机浏览器打开 `http://127.0.0.1:8765/`，约每 2 秒同步已完整写入的错误，可筛选类型、文件和查看源码，不需要等待程序结束。运行中的次数可能只是下限；服务仅监听 Linux 本机地址，网页只读，不会启动 GDB。端口被占用时可指定其他端口，或 `--port 0` 自动分配并使用终端给出的转发命令；`--no-web` 可关闭实时网页。
+
+正常结束或 Ctrl+C 中断后，实时服务会关闭，浏览器保留最后收到的画面；最终已保存结果以采集目录的 `report.html` 为准。还可运行 `python3.9 main.py browse --xml run-live/errors.xml -p /path/to/project` 重新提供网页。库调用通过 `collect_run(..., live_port=8765, project_dir=...)` 启用，省略 `live_port` 保持原有纯终端行为。
+
+一次启动（无需预先生成 XML 或输入错误 ID）：
+
+```bash
+python3.9 aivalgrind.py analyze --output-dir run-all -p /path/to/project -- /path/to/program 参数
+```
+
+也可使用 `python3.9 main.py analyze` 加相同参数。脚本先检查 GDB Python 支持，再首次检测、生成 `run-all/report.html`，然后重新运行目标程序采集变量，保存到 `run-all/captures/session-*/`。这是一次输入 Shell 命令、两次运行目标程序，请考虑程序写文件、请求服务等副作用。首次运行需要结束才会开始复现；长时间运行的程序可使用下面的分步方式。
+
+分步执行：
+
+```bash
+# 1. 首次检测，Ctrl+C 可中断并保留已记录的错误
+python3.9 aivalgrind.py collect --output-dir run-first -- /path/to/program 参数
+
+# 2. 使用已有 XML（也支持被中断的 XML），自动恢复采集记录中的程序及参数
+python3.9 aivalgrind.py analyze --xml run-first/errors.xml --output-dir run-values -p /path/to/project
+```
+
+两种方式都会生成 HTML，并直接进入自动变量采集，不必打开网页再选择错误。输出目录必须是新目录。已有外部 XML 缺少程序信息时，在第二条命令末尾补 `-- /path/to/program 参数`；`--cwd` 和 `--stdin-file` 可用于指定工作目录及重放标准输入。
+
+“自动采集”指自动读取并保存每个错误首次出现时的变量，不是无人值守执行：保存现场后停在 `(gdb)`，输入 `continue` 查看后续错误，输入 `quit` 结束。首次报告只提供复现依据，实际暂停和保存的是新运行触发的错误，不能恢复首次运行的旧变量值。一次启动流程中按 Ctrl+C 会结束整个流程，不会自动开始第二次运行；之后可使用分步方式读取保留的 XML。公开库函数为 `inc.analyze_run(...)`，核心实现在 `inc/workflow.py`。
+
 ```text
 inc/
   __init__.py    # 对外公开的库函数

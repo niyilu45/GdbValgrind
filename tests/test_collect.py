@@ -80,9 +80,12 @@ class CollectionTests(unittest.TestCase):
             manager.__enter__.return_value.launch.return_value = process
             with patch.object(collection.sys, 'platform', 'linux'), patch.object(collection.shutil, 'which', return_value='/usr/bin/valgrind'), patch.object(collection, 'ProcessSession', return_value=manager):
                 with self.assertRaises(KeyboardInterrupt):
-                    collection.collect_run([str(executable)], directory)
+                    collection.collect_run([str(executable)], directory, live_port=0)
             status = json.loads((directory / 'status.json').read_text(encoding='utf-8'))
             self.assertEqual(status['state'], 'interrupted')
+            saved = (directory / 'report.html').read_text(encoding='utf-8')
+            self.assertIn('InvalidWrite', saved)
+            self.assertNotIn('"live": true', saved)
             self.assertEqual(status['kinds']['InvalidWrite']['locations'], 1)
             self.assertFalse(status['counts_complete'])
             self.assertEqual(len(core.load_report(directory / 'errors.xml')['errors']), 1)

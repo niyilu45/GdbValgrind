@@ -22,8 +22,8 @@ main{padding:28px 32px 60px;min-width:0;background:var(--paper)}h2{font-size:24p
 <script id="report-data" type="application/json">__REPORT_DATA__</script>
 <script>
 'use strict';
-const report=JSON.parse(document.getElementById('report-data').textContent);
-const countPrefix=report.counts_complete===false?'至少 ':'';
+let report=JSON.parse(document.getElementById('report-data').textContent);
+let countPrefix=report.counts_complete===false?'至少 ':'';
 const $=id=>document.getElementById(id);
 const labels={InvalidRead:'非法读取',InvalidWrite:'非法写入',InvalidFree:'非法释放',MismatchedFree:'释放方式不匹配',UninitCondition:'未初始化条件',UninitValue:'未初始化值',Overlap:'内存区域重叠',SyscallParam:'系统调用参数',Leak_DefinitelyLost:'确定泄漏',Leak_IndirectlyLost:'间接泄漏',Leak_PossiblyLost:'可能泄漏',Leak_StillReachable:'仍可访问',FishyValue:'可疑参数值'};
 let kind='',selected=null,busy=false,visibleLimit=100;
@@ -32,8 +32,9 @@ const typeName=k=>labels[k]||k;
 const position=f=>f.file?f.file+(f.line?':'+f.line:''):(f.fn||f.obj||'无符号位置');
 const shellQuote=s=>/^[A-Za-z0-9_@%+=:,./-]+$/.test(s)?s:'"'+s.replace(/[\\"$`]/g,'\\$&')+'"';
 const normalize=s=>String(s||'').replace(/\\/g,'/').toLowerCase();
-const indexed=report.errors.map((e,index)=>{const frames=e.stacks.flatMap(s=>s.frames);const files=frames.flatMap(f=>[f.file,f.local_file,f.file?(f.dir?f.dir.replace(/[\\/]$/,'')+'/':'')+f.file:'']).filter(Boolean);return {e,index,files:files.map(normalize),text:normalize([e.kind,typeName(e.kind),e.what,e.id,...files,...frames.flatMap(f=>[f.fn,f.obj])].join(' '))}});
-const kindCounts=new Map();for(const e of report.errors)kindCounts.set(e.kind,(kindCounts.get(e.kind)||0)+1);
+let indexed=[],kindCounts=new Map();
+function indexReport(){indexed=report.errors.map((e,index)=>{const frames=e.stacks.flatMap(s=>s.frames);const files=frames.flatMap(f=>[f.file,f.local_file,f.file?(f.dir?f.dir.replace(/[\\/]$/,'')+'/':'')+f.file:'']).filter(Boolean);return {e,index,files:files.map(normalize),text:normalize([e.kind,typeName(e.kind),e.what,e.id,...files,...frames.flatMap(f=>[f.fn,f.obj])].join(' '))}});kindCounts=new Map();for(const e of report.errors)kindCounts.set(e.kind,(kindCounts.get(e.kind)||0)+1)}
+indexReport();
 let filtered=[];
 function selectError(e){selected=e.id;for(const b of $('list').children)if(b.dataset.errorId)b.setAttribute('aria-current',String(b.dataset.errorId===selected));detail(e);try{history.replaceState(null,'','#'+e.id)}catch{}if(innerWidth<1100)$('detail').scrollIntoView({behavior:'auto'})}
 function nav(){
@@ -86,4 +87,26 @@ $('search').oninput=()=>list();$('fileFilter').oninput=()=>list();
 $('resetFilters').onclick=()=>{kind='';$('search').value='';$('fileFilter').value='';nav();list()};
 nav();list();const first=report.errors.find(e=>e.id===location.hash.slice(1))||report.errors[0];if(first){selectError(first)}
 if(report.token)setInterval(async()=>{try{const r=await fetch('/api/status',{headers:{'X-Debug-Token':report.token}});if(!r.ok)throw Error();const s=await r.json();busy=s.busy;if($('startDebug'))$('startDebug').disabled=busy;if($('status'))$('status').textContent=s.message}catch{if($('status'))$('status').textContent='服务已断开，请检查 SSH 连接。'}},2000);
+if(report.live){
+ let revision=-1;
+ const liveNotice=el('div','正在采集：约每 2 秒更新已完整写入的错误，次数暂为下限。','notice');$('notice').replaceChildren(liveNotice);
+ $('mode').textContent='实时采集 · 网页只读';
+ const refresh=async()=>{
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),5000);
+  try{
+   const response=await fetch('/api/live?revision='+revision,{signal:controller.signal});if(!response.ok)throw Error('HTTP '+response.status);
+   const snapshot=await response.json();revision=snapshot.revision;
+   if(snapshot.report){
+    const previous=selected?report.errors.find(e=>e.id===selected):null;
+    const limit=visibleLimit;report=snapshot.report;countPrefix=report.counts_complete===false?'至少 ':'';indexReport();nav();list();
+    if(limit>visibleLimit){visibleLimit=limit;list(false)}
+    const current=selected?report.errors.find(e=>e.id===selected):null;
+    if(current&&JSON.stringify(previous)!==JSON.stringify(current))detail(current);
+    if(!selected&&filtered.length)selectError(filtered[0].e);
+   }
+   liveNotice.textContent=(report.collection_state==='running'?'采集中':'采集已结束')+' · 已同步 '+new Date().toLocaleTimeString()+' · 仅显示完整写入的错误，检测结束前次数可能是下限。';
+  }catch{liveNotice.textContent='实时连接已断开或采集已结束，当前结果仍可浏览。最终结果请打开采集目录中的 report.html；连接恢复后会自动重试。'}
+  finally{clearTimeout(timeout);setTimeout(refresh,2000)}
+ };refresh();
+}
 </script></body></html>'''

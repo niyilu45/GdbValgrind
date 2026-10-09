@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 from inc import DebugOptions, collect_run, debug_error, export_report, load_report, serve_report
+from inc.cli import main as cli_main
 
 
 def example_collect(command, output_dir):
@@ -44,6 +45,9 @@ def example_auto_analysis(xml_path, project_dir, command, capture_dir, port):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    # One-command workflow uses the same library-backed CLI as aivalgrind.py.
+    if argv and argv[0] in ('analyze', 'collect'):
+        return cli_main(argv)
     split = argv.index("--") if "--" in argv else len(argv)
     command, argv = argv[split + 1:], argv[:split]
     parser = argparse.ArgumentParser(description=__doc__)

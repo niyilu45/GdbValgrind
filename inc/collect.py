@@ -11,7 +11,9 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 
-from .core import report_from_root
+from .core import report_from_root, render_html
+from .commands import command_metadata
+from .live import LiveReport
 from .processes import ProcessSession, interrupt_scope
 from .xmlstream import XMLStream
 
@@ -36,7 +38,7 @@ def print_summary(summary):
         print('  %s: %d 个位置，%s%d 次' % (kind, item['locations'], prefix, item['occurrences']), flush=True)
 
 
-def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0):
+def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0, live_port=None, project_dir=None):
     """Run Memcheck, preserving errors.xml and atomic status.json even on Ctrl+C.
 
     output_dir must not exist. Returns the target exit code; interruption raises
@@ -50,6 +52,8 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0)
         raise ValueError('程序参数必须为无 NUL 字符的字符串')
     if not 0.1 <= interval <= 60:
         raise ValueError('刷新间隔须在 0.1 到 60 秒之间')
+    if live_port is not None and not 0 <= live_port <= 65535:
+        raise ValueError('实时报告端口必须为 0 到 65535，0 表示自动选择')
     workdir = Path(cwd or os.getcwd()).resolve()
     executable = Path(command[0])
     if not executable.is_absolute():
@@ -70,6 +74,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0)
     stream = XMLStream()
     state, result, parse_failure = 'running', None, ''
     last_summary = None
+    live = None
 
     def consume(reader, limit=4 * 1024 * 1024):
         nonlocal parse_failure
@@ -100,9 +105,18 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0)
             os.replace(temp, directory / 'status.json')
             print_summary(summary)
             last_summary = payload
+            if live is not None:
+                detailed = report_from_root(stream.root, xml_path, project_dir, xml_complete=stream.complete)
+                detailed['debug_command'] = command_metadata(stream.root, xml_path, project_dir)
+                live.update(detailed, state)
+                saved = directory / 'report.html.tmp'
+                saved.write_text(render_html(detailed), encoding='utf-8')
+                os.replace(saved, directory / 'report.html')
 
     print('采集目录: ' + str(directory) + '\nCtrl+C 可中断；之后可对 errors.xml 生成报告或自动分析。', flush=True)
     with ExitStack() as files:
+        if live_port is not None:
+            live = files.enter_context(LiveReport(report_from_root(stream.root, xml_path), live_port))
         reader = files.enter_context(xml_path.open('rb'))
         output = files.enter_context((directory / 'program.log').open('wb'))
         diagnostics = files.enter_context((directory / 'launcher.log').open('wb'))
