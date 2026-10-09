@@ -31,6 +31,9 @@ def main(argv=None):
     collect.add_argument('--port', type=int, default=8765, help='实时网页端口，0 为自动选择')
     collect.add_argument('--no-web', action='store_true', help='关闭实时网页')
     collect.add_argument('--project-dir', '-p', type=Path)
+    for command_parser in (collect, analyze):
+        command_parser.add_argument('--plain-terminal', action='store_true', help='关闭固定状态区，用于定位终端卡顿')
+        command_parser.add_argument('--output-mode', choices=('pty', 'file'), default='pty', help='程序输出方式；file 绕过伪终端')
     for name, help_text in (("summary", "显示已保存或被中断 XML 的统计"), ("report", "XML 转为离线 HTML"), ("serve", "网页浏览和启动联合调试"), ("debug", "按错误 ID 启动联合调试")):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("xml", type=Path)
@@ -56,10 +59,13 @@ def main(argv=None):
     try:
         if args.action == 'analyze':
             return analyze_run(command, args.output_dir, xml_path=args.xml, project_dir=args.project_dir,
-                               cwd=args.cwd, stdin_file=args.stdin_file, live_port=None if args.no_web else args.port)
+                               cwd=args.cwd, stdin_file=args.stdin_file, live_port=None if args.no_web else args.port,
+                               plain_terminal=args.plain_terminal, output_mode=args.output_mode)
         if args.action == 'collect':
             return collect_run(command, args.output_dir, cwd=args.cwd, stdin_file=args.stdin_file, interval=args.interval,
-                               live_port=None if args.no_web else args.port, project_dir=args.project_dir)
+                               live_port=None if args.no_web else args.port, project_dir=args.project_dir,
+                               plain_terminal=args.plain_terminal, output_mode=args.output_mode)
+        print('正在解析 XML、去重并读取源码，请稍候……', flush=True)
         report = load_report(args.xml, args.project_dir, allow_partial=not args.strict_xml)
         args.navigation_errors = report['errors']
         if not report['finished']:
@@ -72,6 +78,7 @@ def main(argv=None):
                 raise ValueError("report 不执行程序；请使用 debug 或 serve")
             if args.output.resolve() == args.xml.resolve():
                 raise ValueError("输出文件不能覆盖输入 XML")
+            print('正在生成并保存 HTML 报告……', flush=True)
             args.output.write_text(render_html(report), encoding="utf-8")
             print("已生成 " + str(args.output.resolve()) + "，去重后 " + str(len(report["errors"])) + " 类错误位置，记录次数 " + str(report["occurrences"]))
         elif args.action == "serve":

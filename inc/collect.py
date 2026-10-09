@@ -20,6 +20,7 @@ from .xmlstream import XMLStream
 from .terminal import TerminalProgress
 from .output import prepare_output, COLLECTION_FILES
 from .program_output import ProgramOutput
+from .watchdog import CollectionWatchdog
 
 
 def summary_data(report):
@@ -42,7 +43,8 @@ def print_summary(summary):
         print('  %s: %d 个位置，%s%d 次' % (kind, item['locations'], prefix, item['occurrences']), flush=True)
 
 
-def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0, live_port=None, project_dir=None):
+def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0, live_port=None, project_dir=None,
+                plain_terminal=False, output_mode='pty'):
     """Run Memcheck, preserving errors.xml and atomic status.json even on Ctrl+C.
 
     Reuses directories by removing only manifest-owned outputs. Interruption raises
@@ -58,6 +60,8 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
         raise ValueError('程序参数必须为无 NUL 字符的字符串')
     if not 0.1 <= interval <= 60:
         raise ValueError('刷新间隔须在 0.1 到 60 秒之间')
+    if output_mode not in ('pty', 'file'):
+        raise ValueError('output_mode 必须为 pty 或 file')
     if live_port is not None and not 0 <= live_port <= 65535:
         raise ValueError('实时报告端口必须为 0 到 65535，0 表示自动选择')
     workdir = Path(cwd or os.getcwd()).resolve()
@@ -82,11 +86,16 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
     live = None
     display = None
 
+    def phase(text):
+        watchdog.mark(text)
+        if display is not None:
+            display.set_phase(text)
+
     def consume(reader, limit=4 * 1024 * 1024):
         nonlocal parse_failure
         consumed = 0
         while not parse_failure and (limit is None or consumed < limit):
-            if display is not None and limit is not None:
+            if display is not None:
                 display.check_quit()
             chunk = reader.read(65536)
             if not chunk:
@@ -100,6 +109,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
 
     def publish(force=False):
         nonlocal last_summary
+        phase('正在去重并统计错误')
         report = report_from_root(stream.root, xml_path, xml_complete=stream.complete)
         summary = summary_data(report)
         payload = {**summary, 'state': state, 'exit_code': result,
@@ -113,6 +123,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
             os.replace(temp, directory / 'status.json')
             last_summary = payload
             if live is not None:
+                phase('正在生成网页报告（包含源码）')
                 detailed = report_from_root(stream.root, xml_path, project_dir, xml_complete=stream.complete)
                 detailed['debug_command'] = command_metadata(stream.root, xml_path, project_dir)
                 live.update(detailed, state)
@@ -124,20 +135,22 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
 
     print('采集目录: ' + str(directory) + '\n采集时按 q（无需回车）或 Ctrl+C 中断；之后可对 errors.xml 生成报告或自动分析。', flush=True)
     with ExitStack() as files:
+        watchdog = files.enter_context(CollectionWatchdog(directory / 'diagnostics.log'))
         if live_port is not None:
             live = files.enter_context(LiveReport(report_from_root(stream.root, xml_path), live_port))
         reader = files.enter_context(xml_path.open('rb'))
         output = files.enter_context((directory / 'program.log').open('wb'))
         diagnostics = files.enter_context((directory / 'launcher.log').open('wb'))
         target_input = files.enter_context(open(stdin_file, 'rb')) if stdin_file else subprocess.DEVNULL
-        display = files.enter_context(TerminalProgress(directory, started_at, started_clock))
+        display = files.enter_context(TerminalProgress(directory, started_at, started_clock, enabled=not plain_terminal))
         display.update(summary_data(report_from_root(stream.root, xml_path)), state, live.server.origin + '/' if live else '')
         display.start_updates()
         transport = None
         try:
-            if os.name == 'posix':
+            if os.name == 'posix' and output_mode == 'pty':
                 transport = files.enter_context(ProgramOutput(output, diagnostics))
             with ProcessSession() as processes:
+                phase('正在启动 Valgrind')
                 process = processes.launch([shutil.which('valgrind'), '--tool=memcheck', '--xml=yes',
                                             '--xml-file=' + str(xml_path), '--log-file=' + str(directory / 'valgrind.log'),
                                             '--leak-check=full', '--show-leak-kinds=all', '--track-origins=yes',
@@ -147,15 +160,27 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
                                            stderr=transport.stderr if transport else diagnostics)
                 publish(True)
                 while True:
+                    watchdog.mark('检查键盘及后台线程')
                     display.check_quit()
+                    if display.refresh_error is not None:
+                        raise OSError('终端刷新线程失败（已停止采集）: ' + str(display.refresh_error)
+                                      + '；可使用 --plain-terminal 关闭状态区定位问题')
                     if transport is not None and transport.error:
                         raise OSError('程序输出读取失败: ' + str(transport.error))
+                    phase('正在解析 XML')
                     consume(reader)
+                    watchdog.mark('去重、保存统计及生成网页')
                     publish()
                     result = process.poll()
                     if result is not None:
                         break
-                    display.wait(interval)
+                    remaining = interval
+                    phase('程序运行中，等待新增错误')
+                    while remaining > 0:
+                        watchdog.mark('等待下一次采集')
+                        step = min(0.5, remaining)
+                        display.wait(step)
+                        remaining -= step
             state = 'finished' if result == 0 else 'failed'
         except KeyboardInterrupt:
             state = 'interrupted'
@@ -166,21 +191,24 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
         finally:
             # ProcessSession has already killed/reaped the producers. Drain all
             # bytes they flushed during shutdown and leave an atomic checkpoint.
-            with interrupt_scope(signal.SIG_IGN):
-                try:
+            try:
+                with interrupt_scope(signal.SIG_IGN):
                     if transport is not None:
                         transport.close()
-                    display.stop_updates()
+                with interrupt_scope():
+                    phase('正在解析剩余 XML，保存最终结果（Ctrl+C 可跳过）')
                     consume(reader, limit=None)
                     if stream.started and not parse_failure:
                         stream.finish()
-                finally:
-                    try:
-                        publish(True)
-                    finally:
-                        display.__exit__(None, None, None)
-                    print('开始时间: %s | 已运行: %.1f 秒 | 状态: %s' % (started_at, max(0, time.monotonic() - started_clock), state), flush=True)
-                    if last_summary:
-                        print_summary(last_summary)
-                    print('结果已保留: ' + str(xml_path), flush=True)
+                    publish(True)
+            except KeyboardInterrupt:
+                state = 'interrupted'
+                raise
+            finally:
+                with interrupt_scope(signal.SIG_IGN):
+                    display.__exit__(None, None, None)
+                print('开始时间: %s | 已运行: %.1f 秒 | 状态: %s' % (started_at, max(0, time.monotonic() - started_clock), state), flush=True)
+                if last_summary:
+                    print_summary(last_summary)
+                print('原始结果已保留: ' + str(xml_path) + '（若跳过最终保存，可稍后从 XML 重新生成报告）', flush=True)
     return result

@@ -25,13 +25,13 @@ def clip(text, width):
 
 
 class TerminalProgress:
-    def __init__(self, directory, started_at=None, started_clock=None):
+    def __init__(self, directory, started_at=None, started_clock=None, enabled=True):
         self.directory = directory
         self.started_at = started_at or datetime.now().astimezone().isoformat(timespec='seconds')
         self.clock = time.monotonic() if started_clock is None else started_clock
         self.screen = sys.stdout
         self.active = False
-        self.tty = self.screen.isatty() and os.environ.get('TERM') != 'dumb'
+        self.tty = enabled and self.screen.isatty() and os.environ.get('TERM') != 'dumb'
         self.lines = deque(maxlen=300)
         self.streams = []
         self.keyboard = None
@@ -40,6 +40,14 @@ class TerminalProgress:
         self.stopping = threading.Event()
         self.snapshot = None
         self.refresh_error = None
+        self.phase = ('准备启动', time.monotonic())
+        self.announced_phases = set()
+
+    def set_phase(self, text):
+        self.phase = (text, time.monotonic())
+        if not self.active and text not in self.announced_phases:
+            self.announced_phases.add(text)
+            print('[阶段] ' + text, flush=True)
 
     def start_updates(self):
         if not self.active or self.worker is not None:
@@ -139,11 +147,27 @@ class TerminalProgress:
         elapsed = int(self.elapsed())
         duration = '%02d:%02d:%02d' % (elapsed // 3600, elapsed // 60 % 60, elapsed % 60)
         prefix = '' if summary['counts_complete'] else '至少 '
+        phase, phase_started = self.phase
         rows = ['AiValgrind 内存检测 | ' + {'running': '运行中', 'finished': '已结束', 'failed': '失败', 'interrupted': '已中断'}.get(state, state),
                 '开始: ' + self.started_at + ' | 已运行: ' + duration,
-                '错误: %d 种 / %d 个位置 / %s%d 次' % (len(summary['kinds']), summary['locations'], prefix, summary['occurrences']),
-                '类型: ' + ('; '.join('%s=%d' % (k, v['locations']) for k, v in sorted(summary['kinds'].items())) or '暂未发现'),
-                '实时网页: ' + (url or '未启用'),
+                '当前阶段: %s | 本阶段耗时: %.1f 秒' % (phase, max(0, time.monotonic() - phase_started)),
+                '错误: %d 种 / %d 个位置 / %s%d 次' % (len(summary['kinds']), summary['locations'], prefix, summary['occurrences'])]
+        kinds = sorted(summary['kinds'].items())
+        # Reserve the footer and several program-output rows. Rotate overflowing
+        # types instead of silently clipping them off the right edge or bottom.
+        page_size = max(1, height - 12)
+        pages = max(1, (len(kinds) + page_size - 1) // page_size)
+        page = (elapsed // 5) % pages
+        heading = '错误类型明细（去重位置 / 发生次数）'
+        if pages > 1:
+            heading += ' %d/%d 页，每 5 秒换页' % (page + 1, pages)
+        rows.append(heading)
+        for kind, item in kinds[page * page_size:(page + 1) * page_size]:
+            rows.append('  %s: %d 个位置 / %s%d 次' % (
+                kind, item['locations'], prefix, item['occurrences']))
+        if not kinds:
+            rows.append('  暂未发现内存错误')
+        rows += ['实时网页: ' + (url or '未启用'),
                 '日志目录: ' + str(self.directory),
                 '程序输出（最新内容；可能受程序缓冲影响） | q / Ctrl+C 退出（无需回车）']
         tail = list(self.lines) + ['[' + item[1] + '] ' + item[3] for item in self.streams if item[3]]

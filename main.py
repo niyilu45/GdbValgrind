@@ -17,6 +17,7 @@ def example_collect(command, output_dir):
 
 def example_report(xml_path, project_dir, output_path):
     """场景一：XML 去重并导出带源码的离线报告。"""
+    print('正在解析 XML、去重并生成 HTML 报告，请稍候……', flush=True)
     report = export_report(xml_path, output_path, project_dir=project_dir)
     print(f"报告: {Path(output_path).resolve()}，错误位置: {len(report['errors'])}")
     for error in report["errors"]:
@@ -26,7 +27,9 @@ def example_report(xml_path, project_dir, output_path):
 
 def example_browse(xml_path, project_dir, port):
     """场景二：仅浏览报告，不启动目标程序。"""
+    print('正在解析 XML、去重并读取源码，请稍候……', flush=True)
     report = load_report(xml_path, project_dir)
+    print('正在准备网页报告并启动浏览服务……', flush=True)
     serve_report(report, port=port)
 
 

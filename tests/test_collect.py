@@ -1,4 +1,5 @@
 import json
+import signal
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -66,6 +67,27 @@ class PartialXMLTests(unittest.TestCase):
 
 
 class CollectionTests(unittest.TestCase):
+    def test_final_parsing_remains_interruptible(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder) / 'run'
+            executable = Path(folder) / 'app'
+            executable.touch()
+            manager = MagicMock()
+            process = manager.__enter__.return_value.launch.return_value
+            def finish_process():
+                (directory / 'errors.xml').write_text(PREFIX)
+                return 0
+            process.poll.side_effect = finish_process
+            def interrupt_final_parse():
+                self.assertNotEqual(signal.getsignal(signal.SIGINT), signal.SIG_IGN)
+                raise KeyboardInterrupt()
+            with patch.object(collection.sys, 'platform', 'linux'), patch.object(collection.shutil, 'which', return_value='/usr/bin/valgrind'), patch.object(collection, 'ProcessSession', return_value=manager), patch.object(collection.XMLStream, 'finish', side_effect=interrupt_final_parse) as finish:
+                with self.assertRaises(KeyboardInterrupt):
+                    collection.collect_run([str(executable)], directory, plain_terminal=True, output_mode='file')
+            finish.assert_called_once()
+            self.assertEqual((directory / 'errors.xml').read_text(), PREFIX)
+            manager.__exit__.assert_called_once()
+
     def test_interrupt_preserves_raw_and_atomic_checkpoint(self):
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder) / 'run'

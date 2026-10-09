@@ -5,7 +5,7 @@ from pathlib import Path
 
 MANIFEST = '.aivalgrind-files.json'
 COLLECTION_FILES = ['errors.xml', 'run.json', 'status.json', 'status.json.tmp',
-                    'program.log', 'launcher.log', 'valgrind.log', 'report.html', 'report.html.tmp']
+                    'program.log', 'launcher.log', 'valgrind.log', 'report.html', 'report.html.tmp', 'diagnostics.log']
 
 
 def read_manifest(directory):

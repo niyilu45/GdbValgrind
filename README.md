@@ -353,3 +353,9 @@ python3 -m unittest discover -s tests -v
 仓库附带 Linux CI 配置。本次开发环境为 Windows，因此本地运行时真实 Linux 集成用例会跳过，需在 Linux 上执行上述命令完成验证。
 
 实现参考：[Valgrind GDB 集成说明](https://valgrind.org/docs/manual/manual-core-adv.html)、[GDB 显式位置断点](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Explicit-Locations.html)。
+
+采集状态区还显示当前阶段（解析 XML、去重统计、生成网页、等待新增错误、保存最终结果）和本阶段耗时。`report` / `browse` 在耗时处理开始前打印提示。普通终端模式每种阶段只提示一次，避免循环刷屏。
+
+如果仍出现终端卡住，可在 `collect` / `analyze` 添加 `--plain-terminal --output-mode file --no-web`，关闭固定状态区、伪终端和实时网页以辅助定位；程序输出仍保存在日志中，file 模式可能受到目标程序缓冲影响。采集主线程某阶段超过 15 秒没有推进时，后台尝试写入 `diagnostics.log`，记录阶段及各 Python 线程调用栈；耗时较长不一定代表死锁。该文件属于脚本输出，复用结果目录时自动清理。最终 XML 解析和报告生成允许 Ctrl+C 中断；若跳过最终保存，HTML/统计可能仍是上次检查点，可用保留的 `errors.xml` 重新生成报告。
+
+终端固定状态区按错误类型逐行列出“去重位置数 / 发生次数”，例如 `InvalidWrite: 2 个位置 / 至少 6 次`。计数尚未完整时标注“至少”；类型过多时每 5 秒自动换页，并显示页码，保留程序输出区域。退出后的最终摘要列出所有类型。
