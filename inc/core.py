@@ -26,6 +26,7 @@ from .xmlstream import read_xml
 from .commands import command_metadata
 from .navigation import GDB_NAVIGATION_SCRIPT
 from copy import copy
+from .output import register_capture
 
 
 def integer(value, default=0):
@@ -230,6 +231,7 @@ def prepare_capture(directory, requested_error_id):
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     session = Path(tempfile.mkdtemp(prefix="session-", dir=str(directory)))
+    register_capture(session)
     config = {"directory": str(session), "requested_error_id": requested_error_id}
     script = session / "capture.py"
     script.write_text("_capture_config = " + repr(config) + "\n" + GDB_CAPTURE_SCRIPT, encoding="utf-8")

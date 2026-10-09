@@ -300,6 +300,15 @@ class AutoValueCapture:
             self.sequence += 1
             folder = Path(_capture_config['directory'])
             base = folder / ('error-%04d' % self.sequence)
+            manifest = folder / '.aivalgrind-files.json'
+            # Register exact generated names before writing; unrelated files are never scanned.
+            if manifest.exists():
+                ownership = json.loads(manifest.read_text(encoding='utf-8'))
+                for suffix in ('.json', '.txt', '.html'):
+                    name = base.with_suffix(suffix).name
+                    if name not in ownership['files']:
+                        ownership['files'].append(name)
+                manifest.write_text(json.dumps(ownership), encoding='utf-8')
             serialized = json.dumps(snapshot, ensure_ascii=False, indent=2)
             base.with_suffix('.json').write_text(serialized, encoding='utf-8')
             lines = ['AiValgrind 错误现场', snapshot['captured_at'], snapshot['matching_note'],

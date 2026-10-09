@@ -55,7 +55,7 @@ python3.9 aivalgrind.py collect --output-dir run-first -- /path/to/program 参�
 python3.9 aivalgrind.py analyze --xml run-first/errors.xml --output-dir run-values -p /path/to/project
 ```
 
-两种方式都会生成 HTML，并直接进入自动变量采集，不必打开网页再选择错误。输出目录必须是新目录。已有外部 XML 缺少程序信息时，在第二条命令末尾补 `-- /path/to/program 参数`；`--cwd` 和 `--stdin-file` 可用于指定工作目录及重放标准输入。
+两种方式都会生成 HTML，并直接进入自动变量采集，不必打开网页再选择错误。输出目录可复用，自动清理清单登记的旧结果，其他文件保持不变。已有外部 XML 缺少程序信息时，在第二条命令末尾补 `-- /path/to/program 参数`；`--cwd` 和 `--stdin-file` 可用于指定工作目录及重放标准输入。
 
 “自动采集”指自动读取并保存每个错误首次出现时的变量，不是无人值守执行：保存现场后停在 `(gdb)`，输入 `continue` 查看后续错误，输入 `quit` 结束。首次报告只提供复现依据，实际暂停和保存的是新运行触发的错误，不能恢复首次运行的旧变量值。一次启动流程中按 Ctrl+C 会结束整个流程，不会自动开始第二次运行；之后可使用分步方式读取保留的 XML。公开库函数为 `inc.analyze_run(...)`，核心实现在 `inc/workflow.py`。
 
@@ -139,7 +139,9 @@ python3 aivalgrind.py serve run-001/errors.xml -p /path/to/project \
 
 运行中增量读取已落盘 XML，默认每秒检查一次；统计变化时实时打印错误类型、去重位置数和次数。Valgrind 通常仅输出每个错误上下文的首次记录，重复次数在 `errorcounts` 中另行汇总。因此缺失最终计数时明确显示“至少 N 次”，**不把它冒充精确的重复发生总次数**；错误发现到显示的延迟还取决于 Valgrind 何时输出 XML。
 
-采集目录必须是新目录，不覆盖旧结果。文件包括 `errors.xml`（原始结果）、`status.json`（原子替换的最新统计和 running/finished/interrupted/failed 状态）、`program.log`（目标程序标准输出）、`launcher.log`（标准错误）和 `valgrind.log`（Valgrind 文本日志，如有）。Ctrl+C 后先清理并回收进程，再读取最后写出的 XML 并保存统计。`collect` 支持 `--cwd` 和 `--stdin-file`；默认目标标准输入为空。
+采集目录允许已存在。脚本使用 `.aivalgrind-files.json` 登记自己生成的文件，重跑时只清理这些旧输出（含登记的变量快照），不递归删除目录，保留用户的其他文件和子目录；作为本次分析输入的 XML、程序及标准输入文件也受保护。没有清单的旧版本输出不会按文件名猜测归属；同名冲突、损坏清单或链接会报错并停止，请另选目录或自行整理旧输出。不要手动修改清单，也不要让两个采集任务同时使用同一结果目录。
+
+输出文件包括 `errors.xml`（原始结果）、`status.json`（原子替换的最新统计和 running/finished/interrupted/failed 状态）、`program.log`（目标程序标准输出）、`launcher.log`（标准错误）和 `valgrind.log`（Valgrind 文本日志，如有）。Ctrl+C 后先清理并回收进程，再读取最后写出的 XML 并保存统计。`collect` 支持 `--cwd` 和 `--stdin-file`；默认目标标准输入为空。
 
 库调用：`collect_run(["./app", "arg"], "run-001", cwd="/project", interval=1)`。仅需报告处理时，`load_report`、`export_report`、`debug_error` 和 `serve_report` 也兼容不完整报告。
 

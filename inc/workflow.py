@@ -8,6 +8,7 @@ from . import core
 from .api import DebugOptions, debug_error, export_report
 from .collect import collect_run
 from .processes import ProcessSession
+from .output import prepare_output
 
 
 def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=None, stdin_file=None, live_port=None):
@@ -17,8 +18,6 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
     Ctrl+C aborts the workflow and never starts a new replay.
     """
     directory = Path(output_dir).resolve()
-    if directory.exists():
-        raise FileExistsError('输出目录已存在，请指定新目录: ' + str(directory))
     source = Path(xml_path).resolve() if xml_path else None
     report = core.load_report(source, project_dir) if source else None
     command = list(command)
@@ -46,7 +45,8 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
         if probe.returncode:
             raise ValueError('自动采集需要带 Python 支持的 GDB，未启动目标程序。\n' + out + err)
     if source:
-        directory.mkdir(parents=True, exist_ok=False)
+        prepare_output(directory, ['report.html', 'report.html.tmp'],
+                       [source, source.parent / 'run.json', stdin_file, Path(cwd or '.') / command[0]])
     else:
         print('步骤 1/3：首次运行 Valgrind，保存 XML。此流程随后会再次运行目标程序。', flush=True)
         collect_run(command, directory, cwd=cwd, stdin_file=stdin_file, live_port=live_port, project_dir=project_dir)

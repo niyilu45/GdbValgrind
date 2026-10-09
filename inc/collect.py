@@ -18,6 +18,7 @@ from .live import LiveReport
 from .processes import ProcessSession, interrupt_scope
 from .xmlstream import XMLStream
 from .terminal import TerminalProgress
+from .output import prepare_output, COLLECTION_FILES
 
 
 def summary_data(report):
@@ -43,7 +44,7 @@ def print_summary(summary):
 def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0, live_port=None, project_dir=None):
     """Run Memcheck, preserving errors.xml and atomic status.json even on Ctrl+C.
 
-    output_dir must not exist. Returns the target exit code; interruption raises
+    Reuses directories by removing only manifest-owned outputs. Interruption raises
     KeyboardInterrupt after cleanup and the final summary have been saved.
     """
     started_at = datetime.now().astimezone().isoformat(timespec='seconds')
@@ -66,8 +67,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
             executable = Path(shutil.which(command[0]) or executable)
     if not executable.is_file() or not workdir.is_dir():
         raise ValueError('程序或工作目录不存在')
-    directory = Path(output_dir).resolve()
-    directory.mkdir(parents=True, exist_ok=False)
+    directory = prepare_output(output_dir, COLLECTION_FILES, [executable, stdin_file])
     xml_path = directory / 'errors.xml'
     xml_path.touch()
     (directory / 'run.json').write_text(json.dumps({

@@ -111,8 +111,10 @@ class CollectionTests(unittest.TestCase):
             manager.__enter__.return_value.launch.return_value = process
             with patch.object(collection.sys, 'platform', 'linux'), patch.object(collection.shutil, 'which', return_value='/usr/bin/valgrind'), patch.object(collection, 'ProcessSession', return_value=manager):
                 self.assertEqual(collection.collect_run([str(executable)], directory), 0)
-                with self.assertRaises(FileExistsError):
-                    collection.collect_run([str(executable)], directory)
+                unrelated = directory / 'notes.txt'
+                unrelated.write_text('keep me')
+                self.assertEqual(collection.collect_run([str(executable)], directory), 0)
+                self.assertEqual(unrelated.read_text(), 'keep me')
             status = json.loads((directory / 'status.json').read_text())
             self.assertEqual(status['occurrences'], 9)
             self.assertTrue(status['counts_complete'])
