@@ -143,7 +143,14 @@ def check_initialization(value, budget):
                       undefined_bits=sum(bin(bits[i]).count('1') for i in undefined),
                       ignored_padding_byte_offsets=[i for i in range(length) if i not in used] if complete else [])
         result['members'] = []
+        result['member_states'] = []
         for member in members:
+            member_bits = [bits[i] for i in member['byte_offsets'] if i < length]
+            member_status = ('unaddressable' if None in member_bits else
+                             'defined' if all(b == 0 for b in member_bits) else
+                             'undefined' if all(b == 255 for b in member_bits) else 'partially_undefined')
+            result['member_states'].append({'name': member['name'], 'status': member_status,
+                                           'scope': '仅已检查字节；整个变量的检查范围见初始化状态'})
             member_undefined = [i for i in member['byte_offsets'] if i < length and bits[i] is not None and bits[i] != 0]
             if member_undefined:
                 result['members'].append({'name': member['name'], 'undefined_byte_offsets': member_undefined})
@@ -162,6 +169,38 @@ def initialization_summary(info):
     if info.get('reason'):
         label += '；' + info['reason']
     return label
+
+def capture_source_line(filename, line):
+    # Bounded source-only inspection; never evaluate expressions in the target.
+    try:
+        with open(filename, 'r', encoding='utf-8', errors='replace') as source:
+            text = source.read(1024 * 1024)
+        lines = text.splitlines()
+        if not 0 < line <= len(lines) or (len(text) == 1024 * 1024 and line == len(lines)):
+            return {}
+        # Preserve line numbers while excluding comments and quoted literals.
+        clean = re.sub(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'',
+                       lambda m: '\n' * m.group().count('\n') or ' ', text, flags=re.S)
+        return {'text': lines[line - 1][:4096], 'identifiers': clean.split('\n')[line - 1][:4096],
+                'note': '源码文本关联，不代表该表达式已执行；宏、多行表达式和指针成员可能无法关联'}
+    except (OSError, ValueError, IndexError):
+        return {}
+
+def line_variable_states(frame):
+    source = frame.get('source_line', {}).get('identifiers', '')
+    rows = []
+    for variable in frame.get('variables', []):
+        info = variable['initialization']
+        members = info.get('member_states') or [{'name': '$self', 'status': info['status']}]
+        for member in members:
+            suffix = member['name']
+            name = variable['name'] if suffix == '$self' else variable['name'] + ('' if suffix.startswith('[') else '.') + suffix
+            pattern = re.escape(name).replace(r'\.', r'\s*\.\s*').replace(r'\[', r'\s*\[\s*').replace(r'\]', r'\s*\]')
+            if source and re.search(r'(?<![\w.])' + pattern + r'(?!\w)', source):
+                rows.append({'frame': frame['index'], 'name': name, 'status': member['status'],
+                             'variable_status': info['status'], 'complete': info.get('complete', False),
+                             'evidence': '仅源码同一行出现；未确认实际读取或因果关系'})
+    return rows
 
 def analyze_initialization_use(snapshot):
     message = snapshot['valgrind_error']
@@ -187,7 +226,9 @@ def analyze_initialization_use(snapshot):
                                  'evidence': ('本次系统调用错误的未初始化字节地址落在该成员内；属于地址关联证据。' if matched else
                                               '仅在现场扫描中发现未初始化，未发现该成员被本次错误使用的直接证据；不代表它在整个运行中从未被使用。'),
                                  'undefined_byte_offsets': member['undefined_byte_offsets']})
+    line_variables = [row for frame in snapshot['frames'] for row in line_variable_states(frame)]
     return {'error_is_uninitialized_use': is_use,
+            'line_variables': line_variables,
             'event_severity': 'error',
             'note': ('Valgrind 已报告使用未初始化值，但未必能确定具体变量；无直接使用证据的成员仅列警告。' if is_use else
                      '附加扫描发现的未初始化成员仅列警告，不将它们自动当作当前错误的原因。'),
@@ -287,6 +328,7 @@ class AutoValueCapture:
                     sal = frame.find_sal()
                     row['file'] = sal.symtab.fullname() if sal.symtab else ''
                     row['line'] = sal.line
+                    row['source_line'] = capture_source_line(row['file'], sal.line)
                     row['variables'], row['note'] = capture_variables(frame, initialization_budget)
                 except Exception as exc:
                     row['note'] = str(exc)
@@ -317,8 +359,16 @@ class AutoValueCapture:
                      '\n初始化状态分析：' + snapshot['initialization_analysis']['note']]
             for finding in snapshot['initialization_analysis']['findings']:
                 lines.append('[%s] #%s %s：%s' % ('错误' if finding['severity'] == 'error' else '警告', finding['frame'], finding['name'], finding['evidence']))
+            line_details = []
+            for item in snapshot['initialization_analysis']['line_variables']:
+                line_details.append('同一行变量 #%s %s：%s%s（仅源码关联，不能确认是错误来源）' % (
+                    item['frame'], item['name'], INIT_LABELS.get(item['status'], item['status']),
+                    '' if item['complete'] else '；检查不完整'))
+            lines.extend(line_details)
             for row in snapshot['frames']:
                 lines.append('\n#%s %s %s:%s' % (row['index'], row.get('function', ''), row.get('file', ''), row.get('line', '')))
+                if row.get('source_line'):
+                    lines.append('  源码：' + row['source_line']['text'])
                 for variable in row.get('variables', []):
                     lines.append('  %s %s (%s) = %s [%s]' % (variable['role'], variable['name'], variable.get('type', ''), variable['value'], variable['status']))
                     lines.append('    初始化状态：' + initialization_summary(variable['initialization']))
@@ -334,6 +384,8 @@ class AutoValueCapture:
             gdb.write('\n[AiValgrind] 已保存现场: ' + str(base.with_suffix('.html')) + '\n')
             gdb.write(snapshot['memory'].get('explanation', '') + '\n')
             gdb.write(snapshot['initialization_analysis']['note'] + '\n')
+            for detail in line_details:
+                gdb.write(detail + '\n')
             for finding in snapshot['initialization_analysis']['findings']:
                 gdb.write('[%s] #%s %s：%s\n' % ('错误' if finding['severity'] == 'error' else '警告', finding['frame'], finding['name'], finding['evidence']))
             for row in snapshot['frames']:

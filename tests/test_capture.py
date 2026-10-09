@@ -208,6 +208,48 @@ class CaptureTests(unittest.TestCase):
         snapshot['valgrind_error'] = 'Conditional jump depends on uninitialised value(s)\nAddress 0x104'
         self.assertEqual(analyze(snapshot)['findings'][0]['severity'], 'warning')
 
+    def test_same_line_scalars_members_and_comments(self):
+        source = self.root / 'line.c'
+        source.write_text('/* ignored\n a */\nresult = a + b * item.used; // unused\n', encoding='utf-8')
+        read_line = self.scope['capture_source_line']
+        line = read_line(str(source), 3)
+        self.assertIn('result = a', line['text'])
+        self.assertNotIn('unused', line['identifiers'])
+        fields = [SimpleNamespace(name='used', bitpos=0, bitsize=0, type=self.value_type()),
+                  SimpleNamespace(name='unused', bitpos=32, bitsize=0, type=self.value_type())]
+        structure = self.inspect_init('00000000ffffffff', self.value_type(7, 8, fields=lambda: fields))
+        good = self.inspect_init('00000000')
+        bad = self.inspect_init('ffffffff')
+        frame = {'index': 0, 'source_line': line, 'variables': [
+            {'name': 'a', 'initialization': good}, {'name': 'b', 'initialization': bad},
+            {'name': 'item', 'initialization': structure}]}
+        snapshot = {'valgrind_error': 'Conditional jump depends on uninitialised value(s)', 'frames': [frame]}
+        analysis = self.scope['analyze_initialization_use'](snapshot)
+        states = {row['name']: row['status'] for row in analysis['line_variables']}
+        self.assertEqual(states, {'a': 'defined', 'b': 'undefined', 'item.used': 'defined'})
+        self.assertTrue(all(f['severity'] == 'warning' for f in analysis['findings']))
+        self.assertIn('item.unused', [f['name'] for f in analysis['findings']])
+        self.assertEqual(read_line(str(source), 100), {})
+        self.assertEqual(read_line(str(self.root / 'missing.c'), 1), {})
+        frame['source_line']['identifiers'] = 'printf("b");'
+        source.write_text('printf("b"); /* a */', encoding='utf-8')
+        frame['source_line'] = read_line(str(source), 1)
+        self.assertEqual(self.scope['line_variable_states'](frame), [])
+
+    def test_same_line_analysis_saved_to_all_formats(self):
+        source = self.root / 'demo.c'
+        source.write_text('if (i + gone) {}', encoding='utf-8')
+        self.frame.find_sal = lambda: SimpleNamespace(symtab=SimpleNamespace(fullname=lambda: str(source)), line=1)
+        self.count = 1
+        self.collector.on_stop(None)
+        data = json.loads((self.root / 'error-0001.json').read_text(encoding='utf-8'))
+        rows = data['initialization_analysis']['line_variables']
+        self.assertEqual([row['name'] for row in rows], ['i', 'gone'])
+        self.assertTrue(all(row['status'] == 'unknown' for row in rows))
+        for suffix in ('.txt', '.html'):
+            self.assertIn('同一行变量 #0 gone：无法检查', (self.root / ('error-0001' + suffix)).read_text(encoding='utf-8'))
+        self.assertTrue(any('同一行变量 #0 i' in message for message in self.messages))
+
 
 @unittest.skipUnless(sys.platform == 'linux' and all(shutil.which(n) for n in ('cc', 'valgrind', 'vgdb', 'gdb')), '需要 Linux 与 Valgrind/GDB')
 class InitializationIntegrationTests(unittest.TestCase):
