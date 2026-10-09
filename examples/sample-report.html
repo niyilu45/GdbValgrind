@@ -79,20 +79,24 @@ function detail(e){
 }
 $('file').textContent=report.xml;
 $('mode').textContent=report.token?(report.auto_values?'本地服务 · 自动采集首次错误现场':'本地服务 · 可联合调试'):'离线报告 · 可导出调试命令';
+if(!report.live){$('notice').append(el('div','当前是报告快照，不会实时更新。查看采集进度请打开 collect / analyze 终端打印的 HTTP 实时报告链接，并保持采集运行；直接打开 HTML 文件或使用 browse 仅查看快照。','notice'))}
 if(!report.finished||report.fatal){const n=el('div',(report.fatal?'目标程序收到 '+report.fatal+'。 ':'')+(!report.finished?'报告不完整：仅恢复已完整写出的错误；次数为下限，尚未写出的错误及退出时泄漏信息可能缺失。':''),'notice');$('notice').append(n)}
 $('search').oninput=()=>list();$('fileFilter').oninput=()=>list();
 $('resetFilters').onclick=()=>{kind='';$('search').value='';$('fileFilter').value='';nav();list()};
 nav();list();const first=report.errors.find(e=>e.id===location.hash.slice(1))||report.errors[0];if(first){selectError(first)}
 if(report.token)setInterval(async()=>{try{const r=await fetch('/api/status',{headers:{'X-Debug-Token':report.token}});if(!r.ok)throw Error();const s=await r.json();busy=s.busy;if($('startDebug'))$('startDebug').disabled=busy;if($('status'))$('status').textContent=s.message}catch{if($('status'))$('status').textContent='服务已断开，请检查 SSH 连接。'}},2000);
 if(report.live){
- let revision=-1;
+ let revision=-1,refreshTimer=null,refreshing=false,syncCount=0,lastChange='尚未收到新错误';
  const liveNotice=el('div','正在采集：约每 2 秒更新已完整写入的错误，次数暂为下限。','notice');$('notice').replaceChildren(liveNotice);
+ const refreshButton=el('button','立即刷新','secondary');$('notice').append(refreshButton);
  $('mode').textContent='实时采集 · 网页只读';
  const refresh=async()=>{
-  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),5000);
+  if(refreshing)return;refreshing=true;refreshButton.disabled=true;clearTimeout(refreshTimer);
+  let timeout=null;
   try{
-   const response=await fetch('/api/live?revision='+revision,{signal:controller.signal});if(!response.ok)throw Error('HTTP '+response.status);
-   const snapshot=await response.json();revision=snapshot.revision;
+   const controller=new AbortController();timeout=setTimeout(()=>controller.abort(),5000);
+   const response=await fetch('/api/live?revision='+revision,{signal:controller.signal,cache:'no-store'});if(!response.ok)throw Error('HTTP '+response.status);
+   const snapshot=await response.json();
    if(snapshot.report){
     const previous=selected?report.errors.find(e=>e.id===selected):null;
     const limit=visibleLimit;report=snapshot.report;countPrefix=report.counts_complete===false?'至少 ':'';indexReport();nav();list();
@@ -100,10 +104,12 @@ if(report.live){
     const current=selected?report.errors.find(e=>e.id===selected):null;
     if(current&&JSON.stringify(previous)!==JSON.stringify(current))detail(current);
     if(!selected&&filtered.length)selectError(filtered[0].e);
+    lastChange=new Date().toLocaleTimeString();
    }
-   liveNotice.textContent=(report.collection_state==='running'?'采集中':'采集已结束')+' · 已同步 '+new Date().toLocaleTimeString()+' · 仅显示完整写入的错误，检测结束前次数可能是下限。';
-  }catch{liveNotice.textContent='实时连接已断开或采集已结束，当前结果仍可浏览。最终结果请打开采集目录中的 report.html；连接恢复后会自动重试。'}
-  finally{clearTimeout(timeout);setTimeout(refresh,2000)}
- };refresh();
+   revision=snapshot.revision;syncCount++;
+   liveNotice.textContent=(report.collection_state==='running'?'采集中 · 连接正常':'采集已结束')+' · 最近检查 '+new Date().toLocaleTimeString()+'（第 '+syncCount+' 次） · 数据更新 '+lastChange+' · 全部 '+report.errors.length+' 个错误位置。相同错误已去重，重复次数可能到程序结束才更新；筛选可能隐藏新错误。';
+  }catch(error){liveNotice.textContent='实时更新失败：'+(error.message||String(error))+'。请检查采集是否仍在运行、SSH 转发是否保持连接，以及是否打开了终端打印的实时链接。保留当前结果，2 秒后重试；最终结果在采集目录 report.html。'}
+  finally{clearTimeout(timeout);refreshing=false;refreshButton.disabled=false;refreshTimer=setTimeout(refresh,2000)}
+ };refreshButton.onclick=refresh;refresh();
 }
 </script></body></html>

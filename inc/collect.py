@@ -10,12 +10,14 @@ import subprocess
 import sys
 import time
 import xml.etree.ElementTree as ET
+from datetime import datetime
 
 from .core import report_from_root, render_html
 from .commands import command_metadata
 from .live import LiveReport
 from .processes import ProcessSession, interrupt_scope
 from .xmlstream import XMLStream
+from .terminal import TerminalProgress
 
 
 def summary_data(report):
@@ -44,6 +46,8 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
     output_dir must not exist. Returns the target exit code; interruption raises
     KeyboardInterrupt after cleanup and the final summary have been saved.
     """
+    started_at = datetime.now().astimezone().isoformat(timespec='seconds')
+    started_clock = time.monotonic()
     if sys.platform != 'linux' or not shutil.which('valgrind'):
         raise ValueError('首次采集需要 Linux 和 Valgrind；不需要 GDB')
     if isinstance(command, (str, bytes)) or not command or not command[0]:
@@ -75,6 +79,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
     state, result, parse_failure = 'running', None, ''
     last_summary = None
     live = None
+    display = None
 
     def consume(reader, limit=4 * 1024 * 1024):
         nonlocal parse_failure
@@ -99,11 +104,10 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
         if force or payload != last_summary:
             temp = directory / 'status.json.tmp'
             with temp.open('w', encoding='utf-8') as file:
-                json.dump(payload, file, ensure_ascii=False, indent=2)
+                json.dump({**payload, 'started_at': started_at, 'elapsed_seconds': max(0, time.monotonic() - started_clock)}, file, ensure_ascii=False, indent=2)
                 file.flush()
                 os.fsync(file.fileno())
             os.replace(temp, directory / 'status.json')
-            print_summary(summary)
             last_summary = payload
             if live is not None:
                 detailed = report_from_root(stream.root, xml_path, project_dir, xml_complete=stream.complete)
@@ -112,6 +116,8 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
                 saved = directory / 'report.html.tmp'
                 saved.write_text(render_html(detailed), encoding='utf-8')
                 os.replace(saved, directory / 'report.html')
+        if display is not None:
+            display.render(summary, state, live.server.origin + '/' if live else '')
 
     print('采集目录: ' + str(directory) + '\nCtrl+C 可中断；之后可对 errors.xml 生成报告或自动分析。', flush=True)
     with ExitStack() as files:
@@ -121,6 +127,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
         output = files.enter_context((directory / 'program.log').open('wb'))
         diagnostics = files.enter_context((directory / 'launcher.log').open('wb'))
         target_input = files.enter_context(open(stdin_file, 'rb')) if stdin_file else subprocess.DEVNULL
+        display = files.enter_context(TerminalProgress(directory, started_at, started_clock))
         try:
             with ProcessSession() as processes:
                 process = processes.launch([shutil.which('valgrind'), '--tool=memcheck', '--xml=yes',
@@ -152,6 +159,12 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
                     if stream.started and not parse_failure:
                         stream.finish()
                 finally:
-                    publish(True)
+                    try:
+                        publish(True)
+                    finally:
+                        display.__exit__(None, None, None)
+                    print('开始时间: %s | 已运行: %.1f 秒 | 状态: %s' % (started_at, max(0, time.monotonic() - started_clock), state), flush=True)
+                    if last_summary:
+                        print_summary(last_summary)
                     print('结果已保留: ' + str(xml_path), flush=True)
     return result

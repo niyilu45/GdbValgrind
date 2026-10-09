@@ -56,6 +56,43 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(len(report["errors"]), 2)
         self.assertEqual(len(report["errors"][0]["stacks"]), 2)
 
+    def test_auxiliary_instance_values_merge_and_preserve_first(self):
+        def auxiliary(address, offset, size, relation='after', line=8, state="alloc'd"):
+            return '<auxwhat>Address %s is %s bytes %s a block of size %s %s</auxwhat><stack>%s</stack>' % (address, offset, relation, size, state, frame(line=line))
+        first = error(extra=auxiliary('0x1234', '0', '16'))
+        second = error('2', extra=auxiliary('0x5678', '8', '1,024'))
+        report = self.load(xml(first + second))
+        self.assertEqual(len(report['errors']), 1)
+        item = report['errors'][0]
+        self.assertEqual(item['records'], 2)
+        self.assertEqual(item['count'], 2)
+        self.assertIn('0x1234', item['stacks'][1]['label'])
+        self.assertEqual(item['id'], self.load(xml(first))['errors'][0]['id'])
+        self.assertEqual(item['id'], self.load(xml(second))['errors'][0]['id'])
+        for extra in (auxiliary('0x5678', '8', '16', relation='before'),
+                      auxiliary('0x5678', '8', '16', line=9),
+                      auxiliary('0x5678', '8', '16', state="free'd")):
+            self.assertEqual(len(self.load(xml(first + error('2', extra=extra)))['errors']), 2)
+        self.assertEqual(len(self.load(xml(first + error('2', extra=auxiliary('0x5678', '8', '16'), what='Invalid write of size 8')))['errors']), 2)
+
+    def test_live_partial_and_completed_dedup_agree(self):
+        from inc.xmlstream import XMLStream
+        stream = XMLStream()
+        def record(uid, size):
+            return error(uid, extra='<auxwhat>Address 0x123 is 0 bytes after a block of size %s alloc\'d</auxwhat><stack>%s</stack>' % (size, frame(line=8)))
+        stream.feed(('<valgrindoutput>' + record('1', 16)).encode())
+        first = av.report_from_root(stream.root, self.path, xml_complete=False)['errors'][0]
+        stream.feed(record('2', 32).encode())
+        live = av.report_from_root(stream.root, self.path, xml_complete=False)
+        self.assertEqual(len(live['errors']), 1)
+        self.assertEqual(live['errors'][0]['id'], first['id'])
+        stream.feed(b'<errorcounts><pair><unique>1</unique><count>7</count></pair><pair><unique>2</unique><count>3</count></pair></errorcounts><status><state>FINISHED</state></status></valgrindoutput>')
+        stream.finish()
+        final = av.report_from_root(stream.root, self.path)
+        self.assertEqual(len(final['errors']), 1)
+        self.assertEqual(final['errors'][0]['count'], 10)
+        self.assertEqual(final['errors'][0]['id'], first['id'])
+
     def test_unknown_locations_not_overmerged(self):
         self.assertEqual(len(self.load(xml(error(frames=frame(file="", line=0))+error("2", frames=frame(ip="0x222", file="", line=0))))["errors"]), 2)
 

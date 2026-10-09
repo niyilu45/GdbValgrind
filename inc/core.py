@@ -39,6 +39,15 @@ def normalized(text):
     return re.sub(r"0x[0-9a-fA-F]+", "<address>", text or "")
 
 
+def diagnostic_label(text):
+    """Ignore instance data in auxiliary memory descriptions, not error semantics."""
+    text = normalized(text)
+    text = re.sub(r'\b[\d,]+(?= bytes? (?:after|before|inside)\b)', '<offset>', text)
+    text = re.sub(r'(\bblock of size )\d[\d,]*', r'\1<size>', text)
+    text = re.sub(r'(\bThread\s+)\d+', r'\1<thread>', text)
+    return text
+
+
 class Sources:
     """Resolve only files within the explicitly supplied project directory."""
     def __init__(self, root=None):
@@ -131,7 +140,7 @@ def report_from_root(root, xml_path, project=None, xml_complete=True):
                 for stack in child.findall("stack"):
                     stacks.append({"label": child.findtext("what", "未初始化值来源"), "frames": [{k: f.findtext(k, "") for k in ("ip", "obj", "fn", "dir", "file", "line")} for f in stack.findall("frame")]})
         signature = [kind, "" if kind.startswith("Leak_") else normalized(what),
-                     [(normalized(s["label"]), [frame_key(f) for f in s["frames"]]) for s in stacks]]
+                     [(diagnostic_label(s["label"]), [frame_key(f) for f in s["frames"]]) for s in stacks]]
         if not any(s["frames"] for s in stacks):
             signature.append(uid or ET.tostring(error, encoding="unicode"))
         key = json.dumps(signature, ensure_ascii=False, sort_keys=True)

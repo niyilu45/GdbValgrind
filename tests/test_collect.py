@@ -83,6 +83,8 @@ class CollectionTests(unittest.TestCase):
                     collection.collect_run([str(executable)], directory, live_port=0)
             status = json.loads((directory / 'status.json').read_text(encoding='utf-8'))
             self.assertEqual(status['state'], 'interrupted')
+            self.assertIn('started_at', status)
+            self.assertGreaterEqual(status['elapsed_seconds'], 0)
             saved = (directory / 'report.html').read_text(encoding='utf-8')
             self.assertIn('InvalidWrite', saved)
             self.assertNotIn('"live": true', saved)

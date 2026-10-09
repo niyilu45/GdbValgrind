@@ -3,7 +3,7 @@ const fs=require('fs'),vm=require('vm'),assert=require('assert');
 const html=fs.readFileSync(process.argv[2],'utf8');
 const original=JSON.parse(html.match(/<script id="report-data" type="application\/json">([\s\S]*?)<\/script>/)[1]);
 const script=html.match(/<script>([\s\S]*?)<\/script>/)[1];
-function setup(report){
+function setup(report, environment={}){
  const ids=new Map();
  class Element{
   constructor(tag){this.tag=tag;this.children=[];this.dataset={};this.attrs={};this.value='';this._text='';}
@@ -20,7 +20,7 @@ function setup(report){
  const context=vm.createContext({document:{getElementById:id=>ids.get(id),createElement:tag=>new Element(tag),createTextNode:text=>{const n=new Element('text');n.textContent=text;return n}},
   Option:function(text,value){const n=new Element('option');n.textContent=text;n.value=value;return n;},
   history:{replaceState(){throw Error('file URL history unavailable')}},location:{hash:''},innerWidth:1200,
-  navigator:{},setInterval(){},setTimeout,clearTimeout,console});
+  navigator:{},setInterval(){},setTimeout,clearTimeout,console,...environment});
  vm.runInContext(script,context);
  return {ids,run:s=>vm.runInContext(s,context)};
 }
@@ -55,3 +55,31 @@ assert.equal(big.ids.get('list').children.filter(n=>n.dataset.errorId).length,10
 big.ids.get('list').children.at(-1).onclick();
 assert.equal(big.ids.get('list').children.filter(n=>n.dataset.errorId).length,200,'load more works');
 console.log('Report UI: command quoting, two-error selection, filters, history failure, and 5000-entry list passed.');
+
+async function testLive(){
+ const timers=new Map();let timerId=0,requests=[],step=0;
+ const liveReport={...original,live:true,collection_state:'running',errors:[]};
+ const data=[{revision:0,report:liveReport},{revision:1,report:{...liveReport,errors:original.errors}},
+             {revision:1},new Error('HTTP 503'),{revision:2,report:{...liveReport,errors:original.errors}}];
+ const live=setup(liveReport,{AbortController,
+  setTimeout(fn,delay){const id=++timerId;timers.set(id,{fn,delay});return id;},
+  clearTimeout(id){timers.delete(id);},
+  fetch:async(url,options)=>{requests.push(url);assert.equal(options.cache,'no-store');const next=data[step++];if(next instanceof Error)throw next;return {ok:true,json:async()=>next};}});
+ await new Promise(resolve=>setImmediate(resolve));
+ async function tick(){const timer=[...timers.entries()].find(([,t])=>t.delay===2000);assert(timer,'refresh must be rescheduled');timers.delete(timer[0]);await timer[1].fn();}
+ assert.equal(live.ids.get('list').children.filter(n=>n.dataset.errorId).length,0);
+ live.ids.get('fileFilter').value='examples/demo.c';live.ids.get('fileFilter').oninput();
+ await tick();
+ assert.equal(live.ids.get('list').children.filter(n=>n.dataset.errorId).length,2,'polling adds new errors without reload');
+ assert.equal(live.ids.get('fileFilter').value,'examples/demo.c','keep filters');
+ const selected=live.run('selected');await tick();assert.equal(live.run('selected'),selected);
+ assert(live.ids.get('notice').textContent.includes('3'), 'unchanged revision still updates heartbeat');
+ await tick();assert(live.ids.get('notice').textContent.includes('HTTP 503'),'display actual failure');
+ await tick();assert.equal(live.run('selected'),selected,'recover after temporary failure');
+ assert.equal(requests[1],'/api/live?revision=0');
+ assert.equal(requests[4],'/api/live?revision=1');
+ assert.equal([...timers.values()].filter(t=>t.delay===2000).length,1,'one polling loop');
+ assert(ids.get('notice').textContent.includes('快照'),'static report explains lack of live updates');
+ console.log('Live report: new errors, preserved filters, heartbeat, failure and recovery passed.');
+}
+testLive().catch(error=>{console.error(error);process.exitCode=1;});
