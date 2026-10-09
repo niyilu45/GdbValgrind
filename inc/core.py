@@ -23,6 +23,9 @@ from .templates import HTML
 from .capture import GDB_CAPTURE_SCRIPT
 from .processes import ProcessSession, interrupt_scope
 from .xmlstream import read_xml
+from .commands import command_metadata
+from .navigation import GDB_NAVIGATION_SCRIPT
+from copy import copy
 
 
 def integer(value, default=0):
@@ -96,7 +99,9 @@ def frame_key(frame):
 
 def load_report(xml_path, project=None, allow_partial=True):
     stream = read_xml(xml_path, allow_partial)
-    return report_from_root(stream.root, xml_path, project, xml_complete=stream.complete)
+    report = report_from_root(stream.root, xml_path, project, xml_complete=stream.complete)
+    report['debug_command'] = command_metadata(stream.root, xml_path, project)
+    return report
 
 
 def report_from_root(root, xml_path, project=None, xml_complete=True):
@@ -234,8 +239,36 @@ def check_debug_environment():
 
 def run_debug(error, args):
     check_debug_environment()
-    with ProcessSession() as processes:
-        return _run_debug(error, args, processes)
+    args = copy(args)
+    while True:
+        with ProcessSession() as processes:
+            result = _run_debug(error, args, processes)
+        if not isinstance(result, dict):
+            return result
+        error = next(e for e in args.navigation_errors if e['id'] == result['id'])
+        args.frame = result['frame']
+        # Keep capture enabled when requested, but navigate to this source location.
+        args.navigation_force = True
+
+
+def prepare_navigation(folder, errors, error, frame, auto_values):
+    entries = []
+    for order, item in enumerate(errors, 1):
+        frames = {}
+        for si, stack in enumerate(item['stacks']):
+            for fi, candidate in enumerate(stack['frames']):
+                if candidate.get('fn') or (candidate.get('file') and integer(candidate.get('line')) > 0):
+                    frames['%d:%d' % (si, fi)] = breakpoint_command(candidate)[6:]
+        try:
+            default = breakpoint_command(frame if item['id'] == error['id'] and frame else pick_frame(item))[6:]
+        except ValueError:
+            default = None
+        entries.append({'id': item['id'], 'order': order, 'frames': frames, 'default': default})
+    restart = Path(folder) / 'restart.json'
+    config = {'entries': entries, 'initial': error['id'], 'auto_values': auto_values, 'restart_file': str(restart)}
+    script = Path(folder) / 'navigation.py'
+    script.write_text('_navigation_config = ' + repr(config) + '\n' + GDB_NAVIGATION_SCRIPT, encoding='utf-8')
+    return script, restart
 
 
 def _run_debug(error, args, processes):
@@ -250,12 +283,12 @@ def _run_debug(error, args, processes):
         frame = {}
     if not auto_values:
         breakpoint_command(frame)  # Validate before launching the target.
-    else:
+    if auto_values or getattr(args, 'navigation_errors', None):
         probe = processes.launch([shutil.which("gdb"), "-q", "-nx", "-nh", "-batch", "-ex", "python import gdb"],
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         _, probe_error = probe.communicate(timeout=15)
         if probe.returncode:
-            raise ValueError("--auto-values 需要启用了 Python 支持的 GDB: " + probe_error.strip())
+            raise ValueError("自动采集及会话导航需要启用了 Python 支持的 GDB: " + probe_error.strip())
     command = list(args.command)
     if command and command[0] == "--":
         command.pop(0)
@@ -292,6 +325,13 @@ def _run_debug(error, args, processes):
                               cwd=cwd, stdin=target_input, start_new_session=True)
         try:
             commands = debug_commands(frame, vg.pid, prefix, shutil.which("vgdb"), args.project_dir, args.stop_on_error, capture_script)
+            restart = None
+            if getattr(args, 'navigation_errors', None):
+                navigation, restart = prepare_navigation(folder, args.navigation_errors, error, frame,
+                    auto_values and not getattr(args, 'navigation_force', False))
+                if not auto_values:
+                    commands.remove(breakpoint_command(frame))
+                commands.insert(-1, "python exec(compile(open(" + repr(str(navigation)) + ", encoding='utf-8').read(), 'aivalgrind-navigation', 'exec'))")
             script = Path(folder) / "session.gdb"
             script.write_text("\n".join(commands) + "\n", encoding="utf-8")
             # -nx/-nh avoids executing unexpected personal GDB startup files.
@@ -303,6 +343,11 @@ def _run_debug(error, args, processes):
                     break
                 except subprocess.TimeoutExpired:
                     continue
+            if restart is not None and restart.exists() and result == 0:
+                request = json.loads(restart.read_text(encoding='utf-8'))
+                selected = next(e for e in args.navigation_errors if e['id'] == request['id'])
+                pick_frame(selected, request['frame'])
+                return request
             return result
         finally:
             processes.close()
@@ -405,7 +450,47 @@ def serve(report, args):
         return _serve(report, args)
 
 
+def browsing_instructions(server):
+    lines = ["浏览报告: " + server.origin + "/"]
+    if server.enabled:
+        button = '启动并采集变量' if server.auto_values else '在终端启动 GDB'
+        lines += [
+            '当前模式：网页可启动调试。请保持这个终端运行。',
+            '1. 在网页选中一条错误，点击“' + button + '”。',
+            '2. 切回这个终端，等待出现 (gdb) 提示符，再输入下面的 GDB 命令。',
+        ]
+    else:
+        lines += [
+            '当前模式：仅浏览报告，尚未启动 GDB。这个终端正在提供网页服务，不能在这里直接输入调试命令。',
+            '1. 在网页选中一条错误，点击“生成调试命令”，再点击“复制命令”。',
+            '2. 另开一个连接同一台 Linux 服务器的 SSH 终端，在普通 Shell 提示符（通常是 $ 或 #）后粘贴完整命令并回车。',
+            '   命令已带入生成报告时的工程目录和程序信息；不要在本地 Windows 终端执行。',
+            '3. 等待出现 (gdb) 提示符，表示调试已启动，再输入下面的 GDB 命令。',
+        ]
+        if not server.report.get('debug_command', {}).get('ready'):
+            lines.append('   注意：当前报告缺少原程序信息，网页无法生成完整启动命令；请使用包含程序参数的 Valgrind XML 或配套的 collect 采集记录重新生成报告。')
+    lines += [
+        '',
+        '出现 (gdb) 后可输入（只输入命令，不要输入提示符本身）：',
+        '  bt                 查看调用栈',
+        '  info locals        查看当前栈帧的局部变量',
+        '  print 变量名       查看指定变量，请将“变量名”替换为实际名称',
+        '  continue           继续执行，直到下一个断点、内存错误暂停或程序结束',
+        '  quit               退出这次调试并清理目标进程',
+        '切换错误：在网页选中另一条错误，点击“复制继续命令”，粘贴到已有会话的 (gdb) 后执行。',
+        '  aiv-goto 只能在 (gdb) 中使用，不能在普通 Shell 中执行；回到之前的位置时按提示输入 y 重跑或 n 忽略。',
+        '',
+        '远程 SSH 浏览：若本机浏览器无法打开上述地址，在本机另开终端建立转发（将 用户名@服务器 替换为实际 SSH 登录地址）：',
+        '  ssh -N -L {0}:127.0.0.1:{0} 用户名@服务器'.format(server.server_port),
+        '保持转发终端运行，然后在本机浏览器打开 ' + server.origin + '/',
+        '本服务只提供网页，不会另存 HTML 文件；需要离线 HTML 时使用 report 命令。',
+        'Ctrl+C 停止所在终端中的服务或整个调试会话，不是 GDB 暂停操作。',
+    ]
+    return '\n'.join(lines)
+
+
 def _serve(report, args):
+    args.navigation_errors = report['errors']
     enabled = bool(args.command)
     if enabled:
         check_debug_environment()
@@ -416,8 +501,7 @@ def _serve(report, args):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     try:
         thread.start()
-        print("浏览报告: " + server.origin + "/", flush=True)
-        print("点击网页调试后，在此终端使用 GDB；退出 GDB 后可选择下一条。Ctrl+C 停止服务。", flush=True)
+        print(browsing_instructions(server), flush=True)
         if args.open:
             webbrowser.open(server.origin + "/")
         while True:

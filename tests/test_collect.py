@@ -88,6 +88,9 @@ class CollectionTests(unittest.TestCase):
             self.assertEqual(len(core.load_report(directory / 'errors.xml')['errors']), 1)
             manager.__exit__.assert_called_once()
             self.assertFalse((directory / 'status.json.tmp').exists())
+            metadata = core.load_report(directory / 'errors.xml')['debug_command']
+            self.assertEqual(metadata['source'], 'collection')
+            self.assertEqual(metadata['target_args'], [str(executable.resolve())])
 
     def test_completed_collection_drains_final_counts(self):
         with tempfile.TemporaryDirectory() as folder:

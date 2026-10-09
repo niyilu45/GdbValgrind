@@ -45,6 +45,7 @@ def main(argv=None):
         if args.action == 'collect':
             return collect_run(command, args.output_dir, cwd=args.cwd, stdin_file=args.stdin_file, interval=args.interval)
         report = load_report(args.xml, args.project_dir, allow_partial=not args.strict_xml)
+        args.navigation_errors = report['errors']
         if not report['finished']:
             print('提示：报告不完整，仅恢复已完整写出的错误；重复次数及退出时泄漏信息可能缺失。', file=sys.stderr)
         if args.action == 'summary':

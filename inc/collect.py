@@ -62,6 +62,11 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0)
     directory.mkdir(parents=True, exist_ok=False)
     xml_path = directory / 'errors.xml'
     xml_path.touch()
+    (directory / 'run.json').write_text(json.dumps({
+        'schema': 1, 'xml_file': xml_path.name,
+        'command': [str(executable.resolve())] + list(command[1:]),
+        'cwd': str(workdir), 'stdin_file': str(Path(stdin_file).resolve()) if stdin_file else None,
+    }, ensure_ascii=False, indent=2), encoding='utf-8')
     stream = XMLStream()
     state, result, parse_failure = 'running', None, ''
     last_summary = None

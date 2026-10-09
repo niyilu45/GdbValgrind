@@ -54,15 +54,21 @@ function detail(e){
  if(report.token)box.append(el('p','GDB 在启动本服务的 SSH 终端中交互。退出 GDB 后可调试下一条错误。'));
  const status=el('div','','status');status.id='status';status.setAttribute('role','status');box.append(status);
  const command=el('textarea');command.readOnly=true;command.setAttribute('aria-label','终端调试命令');command.hidden=true;const copy=el('button','复制命令','secondary');copy.hidden=true;
- const updateCommand=()=>{command.value='python3 aivalgrind.py debug '+shellQuote(report.xml)+' --error '+e.id+(report.project?' --project-dir '+shellQuote(report.project):'')+(select.value?' --frame '+select.value:'')+' -- ./your_program';};
- select.onchange=updateCommand;
- copy.onclick=async()=>{try{await navigator.clipboard.writeText(command.value);status.textContent='命令已复制；请替换 ./your_program，并补充实际参数。'}catch{command.focus();command.select();status.textContent='请按 Ctrl+C 复制选中的命令。'}};
+ const metadata=report.debug_command;
+ const updateCommand=()=>{if(!metadata?.ready){command.value='';return}const args=[...metadata.base_args,'--error',e.id,...(select.value?['--frame',select.value]:[]),'--',...metadata.target_args];command.value=args.map(shellQuote).join(' ');};
+ const resumeLabel=el('p','已有调试会话：复制下面的命令到当前 (gdb) 提示符中执行。');
+ const resume=el('textarea');resume.readOnly=true;resume.setAttribute('aria-label','当前 GDB 会话继续命令');
+ const updateResume=()=>{resume.value='aiv-goto '+e.id+(select.value?' '+select.value:'')};updateResume();
+ const copyResume=el('button','复制继续命令','secondary');
+ copyResume.onclick=async()=>{try{await navigator.clipboard.writeText(resume.value);status.textContent='继续命令已复制，请粘贴到当前 (gdb) 提示符。'}catch{resume.focus();resume.select();status.textContent='请按 Ctrl+C 复制继续命令。'}};
+ select.onchange=()=>{updateCommand();updateResume()};
+ copy.onclick=async()=>{try{await navigator.clipboard.writeText(command.value);status.textContent='命令已复制，工程目录和原程序参数已自动带入。'}catch{command.focus();command.select();status.textContent='请按 Ctrl+C 复制选中的命令。'}};
  start.onclick=async()=>{
-  if(!report.token){updateCommand();command.hidden=false;copy.hidden=false;status.textContent='在 Linux 终端执行，将 ./your_program 替换为实际程序及参数。';return}
+  if(!report.token){updateCommand();command.hidden=!metadata?.ready;copy.hidden=!metadata?.ready;status.textContent=metadata?(metadata.note+' '+metadata.cwd_note):'此报告没有调试路径信息，请用新版脚本重新生成报告。';return}
   start.disabled=true;status.textContent='正在提交调试…';
   try{const r=await fetch('/api/debug',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Token':report.token},body:JSON.stringify({id:e.id,frame:select.value||null})});const data=await r.json();status.textContent=data.message;busy=r.ok||r.status===409;start.disabled=busy}catch{status.textContent='服务连接失败，请检查 SSH 转发和服务进程。';start.disabled=false}
  };
- box.append(command,copy);main.append(box);
+ box.append(command,copy,resumeLabel,resume,copyResume,el('p','继续命令定位到所选源码位置。已到达的位置或报告顺序早于当前位置时，会询问是否重跑：y 重新运行，n 忽略。报告顺序不保证本次执行顺序；其他断点或信号可能提前暂停。命令仅适用于新版脚本启动的同一报告会话。'));main.append(box);
  if(!e.stacks.length)main.append(el('p','此错误没有调用栈；建议使用 -g 编译后重新采集。'));
  e.stacks.forEach((s,si)=>{main.append(el('h3',s.label,'stack-label'));s.frames.forEach((f,fi)=>{const d=el('details');d.open=!!f.source&&fi===s.frames.findIndex(x=>x.source);const summary=el('summary');summary.append(el('span','#'+si+':'+fi+'  '+(f.fn||'未知函数')+'  '),el('small',position(f)));d.append(summary);if(f.obj)d.append(el('p',f.obj,'meta'));if(f.source){const pre=el('pre',undefined,'source');for(const row of f.source){const line=el('span',undefined,'line'+(row.number===Number(f.line)?' hit':''));line.append(el('b',String(row.number)),document.createTextNode(row.text));pre.append(line)}d.append(pre)}else d.append(el('p',f.source_note||'无源码信息','meta'));main.append(d)})});
 }

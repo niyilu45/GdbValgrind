@@ -3,6 +3,7 @@
   <!--Synthetic demonstration data, not a real Valgrind run.-->
   <protocolversion>4</protocolversion>
   <tool>memcheck</tool>
+  <args><argv><exe>./examples/demo</exe></argv></args>
   <error>
     <unique>0x1</unique>
     <kind>InvalidWrite</kind>

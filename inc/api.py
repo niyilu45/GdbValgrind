@@ -70,7 +70,9 @@ def debug_error(report: dict, error_id: str, options: DebugOptions, *,
     error = next((item for item in report["errors"] if item["id"] == error_id), None)
     if error is None:
         raise ValueError("找不到错误 ID: " + error_id)
-    return core.run_debug(error, _arguments(options, report.get("project") or None, frame))
+    args = _arguments(options, report.get("project") or None, frame)
+    args.navigation_errors = report['errors']
+    return core.run_debug(error, args)
 
 
 def serve_report(report: dict, *, options: Optional[DebugOptions] = None,
