@@ -17,7 +17,7 @@ main{padding:28px 32px 60px;min-width:0;background:var(--paper)}h2{font-size:24p
 </style></head><body>
 <header><div><h1>AiValgrind <small>内存问题报告</small></h1><p id="file"></p></div><div class="mode" id="mode"></div></header>
 <div id="notice"></div><div class="layout"><nav aria-label="内存问题类型"><h2>问题类型</h2><div id="nav"></div><p class="note">相同错误类型及调用路径已合并。次数来自 XML 中的 errorcounts；缺失时按记录计数。</p></nav>
-<section class="issues" aria-label="错误列表"><div class="search"><label for="search">搜索错误、函数或文件</label><input id="search" type="search" placeholder="例如 InvalidRead、main.c"><p id="listCount" aria-live="polite"></p></div><div id="list"></div></section>
+<section class="issues" aria-label="错误列表"><div class="search"><label for="search">搜索错误、函数或文件</label><input id="search" type="search" placeholder="例如 InvalidRead、main.c"><label for="fileFilter">筛选源文件（文件名或路径）</label><input id="fileFilter" type="search" placeholder="例如 src/main.c"><button id="resetFilters" class="secondary">清除全部筛选</button><p id="listCount" aria-live="polite"></p></div><div id="list"></div></section>
 <main id="detail" tabindex="-1"><div class="empty">选择一条错误，查看调用栈与源码。</div></main></div>
 <script id="report-data" type="application/json">__REPORT_DATA__</script>
 <script>
@@ -26,21 +26,27 @@ const report=JSON.parse(document.getElementById('report-data').textContent);
 const countPrefix=report.counts_complete===false?'至少 ':'';
 const $=id=>document.getElementById(id);
 const labels={InvalidRead:'非法读取',InvalidWrite:'非法写入',InvalidFree:'非法释放',MismatchedFree:'释放方式不匹配',UninitCondition:'未初始化条件',UninitValue:'未初始化值',Overlap:'内存区域重叠',SyscallParam:'系统调用参数',Leak_DefinitelyLost:'确定泄漏',Leak_IndirectlyLost:'间接泄漏',Leak_PossiblyLost:'可能泄漏',Leak_StillReachable:'仍可访问',FishyValue:'可疑参数值'};
-let kind='',selected=null,busy=false;
+let kind='',selected=null,busy=false,visibleLimit=100;
 const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n};
 const typeName=k=>labels[k]||k;
 const position=f=>f.file?f.file+(f.line?':'+f.line:''):(f.fn||f.obj||'无符号位置');
-const shellQuote=s=>"'"+s.replaceAll("'","'\\''")+"'";
+const shellQuote=s=>/^[A-Za-z0-9_@%+=:,./-]+$/.test(s)?s:'"'+s.replace(/[\\"$`]/g,'\\$&')+'"';
+const normalize=s=>String(s||'').replace(/\\/g,'/').toLowerCase();
+const indexed=report.errors.map((e,index)=>{const frames=e.stacks.flatMap(s=>s.frames);const files=frames.flatMap(f=>[f.file,f.local_file,f.file?(f.dir?f.dir.replace(/[\\/]$/,'')+'/':'')+f.file:'']).filter(Boolean);return {e,index,files:files.map(normalize),text:normalize([e.kind,typeName(e.kind),e.what,e.id,...files,...frames.flatMap(f=>[f.fn,f.obj])].join(' '))}});
+const kindCounts=new Map();for(const e of report.errors)kindCounts.set(e.kind,(kindCounts.get(e.kind)||0)+1);
+let filtered=[];
+function selectError(e){selected=e.id;for(const b of $('list').children)if(b.dataset.errorId)b.setAttribute('aria-current',String(b.dataset.errorId===selected));detail(e);try{history.replaceState(null,'','#'+e.id)}catch{}if(innerWidth<1100)$('detail').scrollIntoView({behavior:'auto'})}
 function nav(){
  $('nav').replaceChildren();
  const kinds=['',...new Set(report.errors.map(e=>e.kind))];
- for(const k of kinds){const b=el('button');b.append(el('span',k?typeName(k):'全部问题'),el('span',String(report.errors.filter(e=>!k||e.kind===k).length)));b.setAttribute('aria-current',String(k===kind));b.onclick=()=>{kind=k;nav();list()};$('nav').append(b)}
+ for(const k of kinds){const b=el('button');b.append(el('span',k?typeName(k):'全部问题'),el('span',String(k?kindCounts.get(k):report.errors.length)));b.setAttribute('aria-current',String(k===kind));b.onclick=()=>{kind=k;nav();list()};$('nav').append(b)}
 }
-function list(){
- const query=$('search').value.trim().toLowerCase();
- const errors=report.errors.filter(e=>(!kind||e.kind===kind)&&[e.kind,typeName(e.kind),e.what,e.id,...e.stacks.flatMap(s=>s.frames.map(f=>[f.fn,f.file,f.dir,f.obj].join(' ')))].join(' ').toLowerCase().includes(query));
- $('listCount').textContent=errors.length+' 个错误位置 · '+countPrefix+errors.reduce((n,e)=>n+e.count,0)+' 次记录';$('list').replaceChildren();
- for(const e of errors){const b=el('button',undefined,'issue');b.setAttribute('aria-current',String(e.id===selected));const t=el('span',undefined,'type');t.append(el('span',e.kind),el('span','× '+countPrefix+e.count));b.append(t,el('strong',e.what));const frames=e.stacks[0]?.frames||[];const f=frames.find(f=>f.local_file)||frames.find(f=>f.file)||frames[0];b.append(el('small',f?position(f):'无调用栈'));b.onclick=()=>{selected=e.id;history.replaceState(null,'','#'+e.id);list();detail(e);if(innerWidth<1100)$('detail').scrollIntoView({behavior:'auto'})};$('list').append(b)}
+function list(reset=true){
+ if(reset){visibleLimit=100;const query=normalize($('search').value.trim()),file=normalize($('fileFilter').value.trim());filtered=indexed.filter(row=>(!kind||row.e.kind===kind)&&row.text.includes(query)&&(!file||row.files.some(path=>path.includes(file))));}
+ const errors=filtered.map(row=>row.e);
+ $('listCount').textContent='共 '+report.errors.length+' 个错误位置 · 筛选后 '+errors.length+' 个 · 已显示 '+Math.min(visibleLimit,errors.length)+' 个 · '+countPrefix+errors.reduce((n,e)=>n+e.count,0)+' 次记录';$('list').replaceChildren();
+ for(const {e,index} of filtered.slice(0,visibleLimit)){const b=el('button',undefined,'issue');b.dataset.errorId=e.id;b.setAttribute('aria-current',String(e.id===selected));const t=el('span',undefined,'type');t.append(el('span','第 '+(index+1)+' 条 · '+e.kind),el('span','× '+countPrefix+e.count));b.append(t,el('strong',e.what));const frames=e.stacks[0]?.frames||[];const f=frames.find(f=>f.local_file)||frames.find(f=>f.file)||frames[0];b.append(el('small',f?position(f):'无调用栈'));b.onclick=()=>selectError(e);$('list').append(b)}
+ if(errors.length>visibleLimit){const more=el('button','显示后 100 条','secondary');more.onclick=()=>{visibleLimit+=100;list(false)};$('list').append(more)}
  if(!errors.length)$('list').append(el('div',report.errors.length?'没有匹配项，试试其他类型或关键词。':'XML 中没有内存错误。','empty'));
  if(selected&&!errors.some(e=>e.id===selected)){selected=null;$('detail').replaceChildren(el('div','选择当前列表中的错误以查看详情。','empty'))}
 }
@@ -53,6 +59,7 @@ function detail(e){
  box.append(el('p',report.auto_values?'重新运行到实际内存错误，自动保存当前线程的参数、局部变量和内存诊断。同一问题只保留首次现场，结果保存在服务端采集目录；实际错误可能不同于选中的历史记录。':(e.kind.startsWith('Leak_')?'将重新运行程序，在分配调用路径设置断点。泄漏通常在退出时检测，不能从 XML 恢复旧现场。':'将重新运行程序并在源码位置设置断点。相同行可能在错误发生前多次执行，请在 GDB 中继续或设置条件断点。')));
  if(report.token)box.append(el('p','GDB 在启动本服务的 SSH 终端中交互。退出 GDB 后可调试下一条错误。'));
  const status=el('div','','status');status.id='status';status.setAttribute('role','status');box.append(status);
+ box.append(el('p','启动命令：粘贴到 Linux / SSH 终端的普通 Shell 中执行，不要粘贴到 (gdb)。'));
  const command=el('textarea');command.readOnly=true;command.setAttribute('aria-label','终端调试命令');command.hidden=true;const copy=el('button','复制命令','secondary');copy.hidden=true;
  const metadata=report.debug_command;
  const updateCommand=()=>{if(!metadata?.ready){command.value='';return}const args=[...metadata.base_args,'--error',e.id,...(select.value?['--frame',select.value]:[]),'--',...metadata.target_args];command.value=args.map(shellQuote).join(' ');};
@@ -70,12 +77,13 @@ function detail(e){
  };
  box.append(command,copy,resumeLabel,resume,copyResume,el('p','继续命令定位到所选源码位置。已到达的位置或报告顺序早于当前位置时，会询问是否重跑：y 重新运行，n 忽略。报告顺序不保证本次执行顺序；其他断点或信号可能提前暂停。命令仅适用于新版脚本启动的同一报告会话。'));main.append(box);
  if(!e.stacks.length)main.append(el('p','此错误没有调用栈；建议使用 -g 编译后重新采集。'));
- e.stacks.forEach((s,si)=>{main.append(el('h3',s.label,'stack-label'));s.frames.forEach((f,fi)=>{const d=el('details');d.open=!!f.source&&fi===s.frames.findIndex(x=>x.source);const summary=el('summary');summary.append(el('span','#'+si+':'+fi+'  '+(f.fn||'未知函数')+'  '),el('small',position(f)));d.append(summary);if(f.obj)d.append(el('p',f.obj,'meta'));if(f.source){const pre=el('pre',undefined,'source');for(const row of f.source){const line=el('span',undefined,'line'+(row.number===Number(f.line)?' hit':''));line.append(el('b',String(row.number)),document.createTextNode(row.text));pre.append(line)}d.append(pre)}else d.append(el('p',f.source_note||'无源码信息','meta'));main.append(d)})});
+ e.stacks.forEach((s,si)=>{main.append(el('h3',s.label,'stack-label'));s.frames.forEach((f,fi)=>{const d=el('details');d.open=!!f.source&&fi===s.frames.findIndex(x=>x.source);const summary=el('summary');summary.append(el('span','#'+si+':'+fi+'  '+(f.fn||'未知函数')+'  '),el('small',position(f)));d.append(summary);if(f.obj)d.append(el('p',f.obj,'meta'));if(f.source){let loaded=false;const loadSource=()=>{if(loaded||!d.open)return;loaded=true;const pre=el('pre',undefined,'source');for(const row of f.source){const line=el('span',undefined,'line'+(row.number===Number(f.line)?' hit':''));line.append(el('b',String(row.number)),document.createTextNode(row.text));pre.append(line)}d.append(pre)};d.ontoggle=loadSource;loadSource()}else d.append(el('p',f.source_note||'无源码信息','meta'));main.append(d)})});
 }
 $('file').textContent=report.xml;
 $('mode').textContent=report.token?(report.auto_values?'本地服务 · 自动采集首次错误现场':'本地服务 · 可联合调试'):'离线报告 · 可导出调试命令';
 if(!report.finished||report.fatal){const n=el('div',(report.fatal?'目标程序收到 '+report.fatal+'。 ':'')+(!report.finished?'报告不完整：仅恢复已完整写出的错误；次数为下限，尚未写出的错误及退出时泄漏信息可能缺失。':''),'notice');$('notice').append(n)}
-$('search').oninput=list;
-nav();list();const first=report.errors.find(e=>e.id===location.hash.slice(1))||report.errors[0];if(first){selected=first.id;list();detail(first)}
+$('search').oninput=()=>list();$('fileFilter').oninput=()=>list();
+$('resetFilters').onclick=()=>{kind='';$('search').value='';$('fileFilter').value='';nav();list()};
+nav();list();const first=report.errors.find(e=>e.id===location.hash.slice(1))||report.errors[0];if(first){selectError(first)}
 if(report.token)setInterval(async()=>{try{const r=await fetch('/api/status',{headers:{'X-Debug-Token':report.token}});if(!r.ok)throw Error();const s=await r.json();busy=s.busy;if($('startDebug'))$('startDebug').disabled=busy;if($('status'))$('status').textContent=s.message}catch{if($('status'))$('status').textContent='服务已断开，请检查 SSH 连接。'}},2000);
 </script></body></html>'''
