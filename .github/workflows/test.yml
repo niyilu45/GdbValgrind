@@ -10,3 +10,61 @@ jobs:
           python-version: '3.9'
       - run: sudo apt-get update && sudo apt-get install -y valgrind gdb build-essential
       - run: python -m unittest discover -s tests -v
+  python39-gdb:
+    name: Python 3.9 / GDB ${{ matrix.gdb }}
+    runs-on: ubuntu-latest
+    container: python:3.9-bullseye
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - gdb: '10.1'
+            checksum_tool: md5sum
+            checksum: '1822a7dd45e7813f4408407eec1a6af1'
+          - gdb: '10.2'
+            checksum_tool: md5sum
+            checksum: 'c044b7146903ec51c9d2337a29aee93b'
+          - gdb: '13.1'
+            checksum_tool: sha256sum
+            checksum: '115ad5c18d69a6be2ab15882d365dda2a2211c14f480b3502c6eba576e2e95a0'
+          - gdb: '15.2'
+            checksum_tool: sha256sum
+            checksum: '83350ccd35b5b5a0cba6b334c41294ea968158c573940904f00b92f76345314d'
+    env:
+      GDB_VERSION: ${{ matrix.gdb }}
+      GDB_CHECKSUM: ${{ matrix.checksum }}
+      GDB_CHECKSUM_TOOL: ${{ matrix.checksum_tool }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install build and integration-test dependencies
+        run: |
+          apt-get update
+          apt-get install -y build-essential curl xz-utils libgmp-dev libmpfr-dev libexpat1-dev texinfo bison flex valgrind
+      - name: Build selected GDB with Python 3.9
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          archive="gdb-${GDB_VERSION}.tar.xz"
+          curl --fail --location --retry 3 "https://ftp.gnu.org/gnu/gdb/$archive" -o "$archive"
+          # Checksums published in the respective official GDB release announcements.
+          printf '%s  %s\n' "$GDB_CHECKSUM" "$archive" | "$GDB_CHECKSUM_TOOL" --check
+          tar -xf "$archive"
+          mkdir gdb-build
+          cd gdb-build
+          "../gdb-${GDB_VERSION}/configure" --prefix=/opt/aivalgrind-gdb --with-python=/usr/local/bin/python3.9 --disable-werror --without-guile --without-debuginfod --disable-sim --disable-gdbserver
+          make -j2 all-gdb
+          make install-gdb
+          echo '/opt/aivalgrind-gdb/bin' >> "$GITHUB_PATH"
+      - name: Verify exact compatibility environment
+        run: |
+          python -c 'import sys; assert sys.version_info[:2] == (3, 9), sys.version'
+          gdb -q -nx -nh -batch -ex 'python import gdb, sys, os; assert gdb.VERSION == os.environ["GDB_VERSION"], gdb.VERSION; assert sys.version_info[:2] == (3, 9), sys.version; print(gdb.VERSION, sys.version)'
+          valgrind --version
+          command -v vgdb
+      - name: Run unit and real GDB/Valgrind integration tests
+        run: python -m unittest discover -s tests -v

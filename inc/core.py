@@ -283,12 +283,32 @@ def _run_debug(error, args, processes):
         frame = {}
     if not auto_values:
         breakpoint_command(frame)  # Validate before launching the target.
-    if auto_values or getattr(args, 'navigation_errors', None):
-        probe = processes.launch([shutil.which("gdb"), "-q", "-nx", "-nh", "-batch", "-ex", "python import gdb"],
+    navigation_enabled = bool(getattr(args, 'navigation_errors', None))
+    if auto_values or navigation_enabled:
+        debugger_path = shutil.which('gdb')
+        print('正在检查 GDB 的 Python 支持（最多等待 5 秒）: ' + debugger_path, flush=True)
+        probe = processes.launch([debugger_path, "-q", "-nx", "-nh", "-iex", "set auto-load off", "-batch", "-ex", "python import gdb, sys; print('GDB: ' + gdb.VERSION + '; embedded Python: ' + sys.version.split()[0])"],
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        _, probe_error = probe.communicate(timeout=15)
+        try:
+            probe_output, probe_error = probe.communicate(timeout=5)
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError('GDB 启动检查超过 5 秒，已取消调试；请在服务器单独运行 gdb --version 检查安装和启动环境。') from exc
         if probe.returncode:
-            raise ValueError("自动采集及会话导航需要启用了 Python 支持的 GDB: " + probe_error.strip())
+            diagnostic = (probe_output + '\n' + probe_error).strip()
+            unsupported = 'python scripting is not supported' in diagnostic.lower()
+            if unsupported and not auto_values:
+                navigation_enabled = False
+                print('当前 GDB 未编译 Python 支持，已切换为普通断点调试。', flush=True)
+                print('可以使用 bt、info locals、print 和 continue；网页的 aiv-goto 继续命令在此会话不可用。', flush=True)
+                print('若要切换报告错误，请先输入 quit，再在 Shell 执行该错误的完整启动命令。', flush=True)
+            elif unsupported:
+                raise ValueError('当前 GDB 未编译 Python 支持，无法使用 --auto-values 自动采集。请更换带 Python 支持的 GDB 并确保 PATH 优先找到它，或去掉 --auto-values 使用普通断点调试。仅安装 Python 不能为这个 GDB 增加支持。\nGDB: ' + debugger_path + '\n' + diagnostic)
+            else:
+                raise ValueError('GDB Python 启动检查失败，尚未启动目标程序。\nGDB: ' + debugger_path + '\n' + diagnostic)
+        else:
+            print('GDB Python 支持检查通过。', flush=True)
+            if probe_output.strip():
+                print(probe_output.strip(), flush=True)
     command = list(args.command)
     if command and command[0] == "--":
         command.pop(0)
@@ -318,6 +338,7 @@ def _run_debug(error, args, processes):
         log_path = Path(folder) / "valgrind.log"
         target_input = resources.enter_context(open(args.stdin_file, "rb")) if args.stdin_file else subprocess.DEVNULL
         # Ctrl+C reaches the supervisor, which owns separate tool process groups.
+        print('正在启动 Valgrind 和目标程序，随后连接 GDB…', flush=True)
         vg = processes.launch([shutil.which("valgrind"), "--tool=memcheck", "--leak-check=full",
                                "--show-leak-kinds=all", "--track-origins=yes", "--vgdb=yes",
                                "--vgdb-error=0", "--vgdb-prefix=" + prefix,
@@ -326,7 +347,7 @@ def _run_debug(error, args, processes):
         try:
             commands = debug_commands(frame, vg.pid, prefix, shutil.which("vgdb"), args.project_dir, args.stop_on_error, capture_script)
             restart = None
-            if getattr(args, 'navigation_errors', None):
+            if navigation_enabled:
                 navigation, restart = prepare_navigation(folder, args.navigation_errors, error, frame,
                     auto_values and not getattr(args, 'navigation_force', False))
                 if not auto_values:
@@ -335,6 +356,7 @@ def _run_debug(error, args, processes):
             script = Path(folder) / "session.gdb"
             script.write_text("\n".join(commands) + "\n", encoding="utf-8")
             # -nx/-nh avoids executing unexpected personal GDB startup files.
+            print('正在连接 GDB；连接后程序将运行到断点，耗时取决于程序执行路径。Ctrl+C 可退出并清理进程。', flush=True)
             gdb = processes.launch([shutil.which("gdb"), "-q", "-nx", "-nh", "-iex", "set auto-load off",
                                     "-x", str(script), "--args"] + command, cwd=cwd)
             while True:

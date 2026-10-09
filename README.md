@@ -4,6 +4,17 @@ Python 库与调用示例：把 Valgrind XML 转成可离线打开的 HTML，按
 
 复制 `inc/` 目录及入口 `main.py`、`aivalgrind.py` 到 Linux，保持相对位置。使用示例数据时再复制 `examples/`。Python 3.9 或更新版本即可，无第三方 Python 依赖。报告转换也可在 Windows 运行；联合调试需要 Linux 的 `valgrind`、`vgdb` 和 `gdb`。
 
+兼容目标为 **Python 3.9 + GDB 10.1、10.2、13.1、15.2**。自动变量采集及 `aiv-goto` 导航要求 GDB 编译时启用 Python；固定版本 CI 分别构建这四个版本，并统一内嵌 Python 3.9。系统中运行脚本的 Python 与 GDB 内嵌的 Python 是两个独立环境，安装 Python 3.9 不会自动改变已有 GDB 的编译配置。上述版本没有 Python 扩展时可使用普通断点调试，启动时会明确提示导航不可用。
+
+启动探测会打印实际 GDB 路径、GDB 版本和内嵌 Python 版本。如果自行构建 GDB，请在具备 Python 3.9 开发头文件及库的环境使用 `--with-python=/实际路径/python3.9`，并将构建结果的 `bin` 目录放到 PATH 前面。完整构建步骤见 `.github/workflows/test.yml` 的 `python39-gdb` 矩阵作业。每个版本独立检查 GDB 和 Python 的实际版本后运行真实 Valgrind/GDB 集成测试，一个版本失败不会取消其他版本的测试。工作流尚未执行成功时，不应将其视为已通过实机验证。
+
+| 脚本 Python | GDB（内嵌 Python 3.9） | 验证范围 | 当前状态 |
+| --- | --- | --- | --- |
+| 3.9 | 10.1 | 报告、断点、导航、自动采集、进程清理 | CI 已配置，待运行 |
+| 3.9 | 10.2 | 同上 | CI 已配置，待运行 |
+| 3.9 | 13.1 | 同上 | CI 已配置，待运行 |
+| 3.9 | 15.2 | 同上 | CI 已配置，待运行 |
+
 ## 库结构与示例入口
 
 ```text
@@ -137,6 +148,8 @@ aiv-goto 错误ID 0:0
 这里的序号是 XML 中去重错误首次出现的顺序，不是浏览器筛选后的序号，也不保证多线程或不同输入下的实际发生顺序。导航定位的是源码位置，可能在真正出错之前命中，同一源码位置也可能对应多条错误；泄漏定位到分配位置。其他用户断点、信号或自动采集的内存错误可能提前暂停，此时可再次执行继续命令。程序退出仍未到达目标会给出提示，不会声称已复现该错误。
 
 ## 3. SSH 环境：网页选择错误并启动 GDB
+
+若终端报 `Python scripting is not supported in this copy of GDB`，说明当前 GDB 没有编译 Python 扩展支持；仅安装 Python 或 pip 包不能解决。可在服务器运行 `command -v gdb` 和 `gdb -q -nx -nh -batch -ex "python import gdb; print('Python OK')"` 确认所用版本。普通调试会自动禁用 `aiv-goto` 并保留源码断点、`bt`、`info locals`、`print` 和 `continue`；切换错误时先 `quit`，再执行另一条错误的完整启动命令。`--auto-values` 必须更换为带 Python 支持的 GDB（确保 PATH 优先找到它），或移除此选项使用普通调试。GDB 的构建选项见 [官方 Python 支持说明](https://www.sourceware.org/gdb/current/onlinedocs/gdb.html/Python.html)。
 
 在本机建立 SSH 端口转发并登录 Linux，远程和本地端口请保持一致：
 
@@ -278,7 +291,7 @@ XML 是诊断记录，不是进程快照。这里的联合调试是**重新运�
 - Ctrl+C 会退出当前入口，命令行返回 130；库调用在完成清理后向调用方抛出 `KeyboardInterrupt`。Linux 上 SIGTERM、SSH 断连通常产生的 SIGHUP 也进入同一清理流程。
 - GDB、Valgrind、vgdb 使用受管理的独立进程组。正常退出、启动失败、中断或异常都执行清理：先发送 SIGTERM，最多等待 2 秒，再发送 SIGKILL，最多再等待 2 秒。清理过程中重复按 Ctrl+C 不会打断回收。
 - 直接子进程通过 Popen 回收；Linux 临时启用 subreaper，接收并回收同一受管理进程组内的孤儿后代，结束后恢复原设置。不使用 `waitpid(-1)`，避免抢走其他业务子进程的退出状态。subreaper 是进程级设置，库调试应放在主线程中，避免同时运行其他进程管理器。
-- GDB 等待采用短超时轮询，启动探测最多等待 15 秒。网页连接读写有 5 秒超时，响应发送不持有状态锁；退出时关闭服务端口。GDB 修改过的终端模式在退出时恢复。
+- GDB 等待采用短超时轮询，Python 支持启动探测最多等待 5 秒，并立即打印所用 GDB 路径及启动阶段。网页连接读写有 5 秒超时，响应发送不持有状态锁；退出时关闭服务端口。GDB 修改过的终端模式在退出时恢复。
 - 此清理范围覆盖保持在原进程组中的后代；目标自行调用 `setsid`/`setpgid` 脱离进程组的守护进程不在范围内。外部 SIGKILL 杀死脚本无法执行 Python 清理；内核不可中断睡眠进程也无法保证立即退出，脚本会报告清理超时而不是无限等待。
 
 ## 验证
