@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+report.html
+examples/demo
+examples/errors.xml
+.qa/
+captures/
