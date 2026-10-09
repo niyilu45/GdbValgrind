@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from inc.terminal import TerminalProgress, clip
@@ -14,6 +15,36 @@ class TTY(io.StringIO):
 
 
 class TerminalTests(unittest.TestCase):
+    def test_q_and_ctrl_c_bytes_interrupt_and_non_tty_does_not_read(self):
+        display = TerminalProgress(Path('.'))
+        with patch('inc.terminal.select.select') as ready:
+            display.check_quit()
+            ready.assert_not_called()
+        display.keyboard = 81
+        for key in (b'q', b'Q', b'\x03'):
+            with patch('inc.terminal.select.select', return_value=([81], [], [])), patch('inc.terminal.os.read', return_value=key):
+                with self.assertRaises(KeyboardInterrupt):
+                    display.check_quit()
+
+    def test_keyboard_mode_enables_signals_and_restores_settings(self):
+        settings = [8, 0, 0, 3, 0, 0, [b'X', 1, 0]]
+        calls = []
+        termios = SimpleNamespace(ICANON=1, ECHO=2, ISIG=4, IXON=8,
+            VINTR=0, VMIN=1, VTIME=2, TCSANOW=0, error=OSError,
+            tcgetattr=lambda fd: settings, tcsetattr=lambda *args: calls.append(args))
+        stdin = SimpleNamespace(isatty=lambda: True, fileno=lambda: 81)
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'program.log').touch()
+            (root / 'launcher.log').touch()
+            with patch.dict('sys.modules', {'termios': termios}), patch('sys.platform', 'linux'), patch('sys.stdin', stdin), patch('sys.stdout', io.StringIO()):
+                with TerminalProgress(root):
+                    updated = calls[0][2]
+                    self.assertEqual(updated[3], 4)
+                    self.assertEqual(updated[0], 0)
+                    self.assertEqual(updated[6][0], b'\x03')
+            self.assertEqual(calls[-1], (81, 0, settings))
+
     def test_fixed_screen_logs_elapsed_and_restore_on_interrupt(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

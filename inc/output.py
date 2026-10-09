@@ -44,12 +44,19 @@ def prepare_output(directory, names, protected=()):
     if any(n not in COLLECTION_FILES for n in owned):
         raise ValueError('输出清单含未知文件，未清理')
     deletions, empty_dirs = [], []
-    for name in set(owned) | set(names):
+    for name in sorted(set(owned) | set(names)):
         path = directory / name
         if path.is_symlink() or (path.exists() and not path.is_file()):
             raise ValueError('输出位置包含链接或目录，未清理: ' + str(path))
-        if path.exists() and name in names and (name not in owned or path.resolve() in protected):
-            raise ValueError('输出与未登记文件或输入文件冲突，未清理: ' + str(path))
+        if path.exists() and name in names and path.resolve() in protected:
+            raise ValueError('输出路径与本次输入文件重名，未删除任何文件: ' + str(path)
+                             + '\n请使用其他 --output-dir，避免覆盖程序或输入数据。')
+        if path.exists() and name in names and name not in owned:
+            reason = '目录中没有 .aivalgrind-files.json 归属清单' if previous is None else '归属清单没有登记这个文件'
+            raise ValueError('已有文件无法确认归属，未删除任何文件: ' + str(path)
+                             + '\n原因: ' + reason + '。旧版本产生的文件也可能出现此情况。'
+                             + '\n处理方法: 改用新的 --output-dir；或确认旧结果已备份后，自行整理同名文件。'
+                             + '\n不要直接删除未知文件，也不要把整个结果目录清空。')
         if name in owned and path.exists() and path.resolve() not in protected:
             deletions.append(path)
     captures = directory / 'captures'

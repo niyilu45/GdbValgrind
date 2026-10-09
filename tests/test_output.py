@@ -5,6 +5,17 @@ from inc.output import prepare_output, COLLECTION_FILES, register_capture, write
 
 
 class OutputTests(unittest.TestCase):
+    def test_unregistered_program_log_explains_recovery_without_deletion(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            log = root / 'program.log'
+            log.write_text('keep existing log')
+            with self.assertRaisesRegex(ValueError, 'program.log') as caught:
+                prepare_output(root, COLLECTION_FILES)
+            self.assertIn('--output-dir', str(caught.exception))
+            self.assertIn('.aivalgrind-files.json', str(caught.exception))
+            self.assertEqual(log.read_text(), 'keep existing log')
+
     def test_reuse_preserves_unrelated_files_and_capture_notes(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

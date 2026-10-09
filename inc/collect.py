@@ -85,6 +85,8 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
         nonlocal parse_failure
         consumed = 0
         while not parse_failure and (limit is None or consumed < limit):
+            if display is not None and limit is not None:
+                display.check_quit()
             chunk = reader.read(65536)
             if not chunk:
                 break
@@ -119,7 +121,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
         if display is not None:
             display.render(summary, state, live.server.origin + '/' if live else '')
 
-    print('采集目录: ' + str(directory) + '\nCtrl+C 可中断；之后可对 errors.xml 生成报告或自动分析。', flush=True)
+    print('采集目录: ' + str(directory) + '\n采集时按 q（无需回车）或 Ctrl+C 中断；之后可对 errors.xml 生成报告或自动分析。', flush=True)
     with ExitStack() as files:
         if live_port is not None:
             live = files.enter_context(LiveReport(report_from_root(stream.root, xml_path), live_port))
@@ -137,12 +139,13 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
                                            cwd=workdir, stdin=target_input, stdout=output, stderr=diagnostics)
                 publish(True)
                 while True:
+                    display.check_quit()
                     consume(reader)
                     publish()
                     result = process.poll()
                     if result is not None:
                         break
-                    time.sleep(interval)
+                    display.wait(interval)
             state = 'finished' if result == 0 else 'failed'
         except KeyboardInterrupt:
             state = 'interrupted'

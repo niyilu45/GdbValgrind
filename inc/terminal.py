@@ -7,6 +7,7 @@ import shutil
 import sys
 import time
 import unicodedata
+import select
 
 
 def clip(text, width):
@@ -32,6 +33,8 @@ class TerminalProgress:
         self.tty = self.screen.isatty() and os.environ.get('TERM') != 'dumb'
         self.lines = deque(maxlen=300)
         self.streams = []
+        self.keyboard = None
+        self.terminal_settings = None
 
     def elapsed(self):
         return max(0, time.monotonic() - self.clock)
@@ -41,6 +44,19 @@ class TerminalProgress:
             for name, label in [('program.log', 'stdout'), ('launcher.log', 'stderr')]:
                 self.streams.append([open(self.directory / name, 'rb'), label,
                                      codecs.getincrementaldecoder('utf-8')(errors='replace'), ''])
+            if sys.platform == 'linux' and sys.stdin.isatty():
+                import termios
+                fd = sys.stdin.fileno()
+                settings = termios.tcgetattr(fd)
+                updated = settings[:]
+                updated[6] = settings[6][:]
+                updated[3] = (updated[3] & ~(termios.ICANON | termios.ECHO)) | termios.ISIG
+                updated[0] &= ~termios.IXON
+                updated[6][termios.VINTR] = b'\x03'
+                updated[6][termios.VMIN] = 1
+                updated[6][termios.VTIME] = 0
+                self.keyboard, self.terminal_settings = fd, (fd, settings)
+                termios.tcsetattr(fd, termios.TCSANOW, updated)
             if self.tty:
                 self.active = True
                 self.screen.write('\x1b[?1049h\x1b[?25l')
@@ -49,6 +65,23 @@ class TerminalProgress:
         except BaseException:
             self.__exit__(None, None, None)
             raise
+
+    def check_quit(self):
+        if self.keyboard is not None and select.select([self.keyboard], [], [], 0)[0]:
+            keys = os.read(self.keyboard, 1024)
+            if not keys:
+                self.keyboard = None
+            elif b'q' in keys.lower() or b'\x03' in keys:
+                raise KeyboardInterrupt()
+
+    def wait(self, seconds):
+        deadline = time.monotonic() + seconds
+        while True:
+            self.check_quit()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(0.1, remaining))
 
     def read_logs(self):
         for entry in self.streams:
@@ -79,7 +112,7 @@ class TerminalProgress:
                 '类型: ' + ('; '.join('%s=%d' % (k, v['locations']) for k, v in sorted(summary['kinds'].items())) or '暂未发现'),
                 '实时网页: ' + (url or '未启用'),
                 '日志目录: ' + str(self.directory),
-                '程序输出（最新内容；无输出可能是程序缓冲，并非卡死） | Ctrl+C 退出']
+                '程序输出（最新内容；可能受程序缓冲影响） | q / Ctrl+C 退出（无需回车）']
         tail = list(self.lines) + ['[' + item[1] + '] ' + item[3] for item in self.streams if item[3]]
         available = max(0, height - 1 - len(rows))
         rows += tail[-available:] if available else []
@@ -95,5 +128,15 @@ class TerminalProgress:
                 self.screen.flush()
         finally:
             self.active = False
+            if self.terminal_settings is not None:
+                import termios
+                fd, settings = self.terminal_settings
+                try:
+                    termios.tcsetattr(fd, termios.TCSANOW, settings)
+                except (OSError, termios.error):
+                    pass  # SSH terminal may already be gone; still close our files.
+                finally:
+                    self.terminal_settings = None
+                    self.keyboard = None
             for entry in self.streams:
                 entry[0].close()
