@@ -25,6 +25,16 @@ function setup(report, environment={}){
  return {ids,run:s=>vm.runInContext(s,context)};
 }
 const {ids,run}=setup(original);
+let sourceHTML='',opened=[];
+const viewer=setup(original,{Blob:class {constructor(parts){sourceHTML=parts.join('')}},
+ URL:{createObjectURL(){return 'blob:source'},revokeObjectURL(){}},
+ window:{open(...args){opened=args}},setTimeout(){}});
+viewer.run('openSourceFile(report.errors[0].stacks[0].frames[0])');
+assert.equal(opened[1],'_blank');assert(opened[2].includes('noopener'));
+assert(sourceHTML.includes('id="L1"'));assert(sourceHTML.includes('class="hit"'));
+assert(sourceHTML.includes('源码快照'));
+viewer.run('report.source_files[report.errors[0].stacks[0].frames[0].source_file_id].lines=["<script>alert(1)</script>"];openSourceFile(report.errors[0].stacks[0].frames[0])');
+assert(!sourceHTML.includes('<script>'));assert(sourceHTML.includes('&lt;script&gt;'));
 assert.equal(ids.get('list').children.filter(n=>n.dataset.errorId).length,2,'both sample errors visible');
 ids.get('list').children[1].onclick();
 assert(ids.get('detail').textContent.includes(original.errors[1].id),'history failure must not block switching');

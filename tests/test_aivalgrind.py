@@ -56,6 +56,16 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(len(report["errors"]), 2)
         self.assertEqual(len(report["errors"][0]["stacks"]), 2)
 
+    def test_complete_source_shared_across_frames_and_unavailable_without_project(self):
+        report = self.load(xml(error() + error('2', frames=frame(line=30))))
+        self.assertEqual(len(report['source_files']), 1)
+        frames = [e['stacks'][0]['frames'][0] for e in report['errors']]
+        self.assertEqual(frames[0]['source_file_id'], frames[1]['source_file_id'])
+        source = report['source_files'][frames[0]['source_file_id']]
+        self.assertEqual(len(source['lines']), 40)
+        self.assertEqual(source['lines'][-1], 'source line 40')
+        self.assertEqual(self.load(xml(error()), project=False)['source_files'], {})
+
     def test_auxiliary_instance_values_merge_and_preserve_first(self):
         def auxiliary(address, offset, size, relation='after', line=8, state="alloc'd"):
             return '<auxwhat>Address %s is %s bytes %s a block of size %s %s</auxwhat><stack>%s</stack>' % (address, offset, relation, size, state, frame(line=line))

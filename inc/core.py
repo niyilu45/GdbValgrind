@@ -55,6 +55,7 @@ class Sources:
         self.root = Path(root).resolve() if root else None
         self.index = None
         self.cache = {}
+        self.files = {}
         if self.root and not self.root.is_dir():
             raise ValueError("工程目录不存在: " + str(self.root))
 
@@ -90,6 +91,9 @@ class Sources:
             if path not in self.cache:
                 self.cache[path] = path.read_text(encoding="utf-8", errors="replace").splitlines()
             lines = self.cache[path]
+            key = hashlib.sha256(str(path).encode('utf-8')).hexdigest()[:16]
+            self.files[key] = {'path': str(path), 'lines': lines}
+            frame['source_file_id'] = key
             line = integer(frame.get("line"))
             if not 1 <= line <= len(lines):
                 frame["source_note"] = "XML 行号超出源码范围；请核对代码版本"
@@ -163,7 +167,7 @@ def report_from_root(root, xml_path, project=None, xml_complete=True):
                 sources.enrich(frame)
     statuses = root.findall("status/state")
     finished = bool(xml_complete and statuses and statuses[-1].text == "FINISHED")
-    return {"xml": str(Path(xml_path).resolve()), "project": str(sources.root or ""),
+    return {"xml": str(Path(xml_path).resolve()), "project": str(sources.root or ""), "source_files": sources.files,
             "errors": errors, "occurrences": sum(e["count"] for e in errors),
             "finished": finished, "xml_complete": xml_complete,
             "counts_complete": finished and all(uid in counts for e in errors for uid in e['unique_ids']),
