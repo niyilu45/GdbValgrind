@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from types import SimpleNamespace
+import threading
 from unittest.mock import patch
 
 from inc.terminal import TerminalProgress, clip
@@ -15,6 +16,24 @@ class TTY(io.StringIO):
 
 
 class TerminalTests(unittest.TestCase):
+    def test_refresh_continues_without_main_loop_updates(self):
+        display = TerminalProgress(Path('.'))
+        display.active = True
+        display.snapshot = ({}, 'running', '')
+        refreshed = threading.Event()
+        calls = []
+        def render(*args):
+            calls.append(args)
+            if len(calls) >= 2:
+                refreshed.set()
+        with patch.object(display, 'render', side_effect=render):
+            display.start_updates()
+            try:
+                self.assertTrue(refreshed.wait(2), 'display must refresh without publish()')
+            finally:
+                display.stop_updates()
+        self.assertIsNone(display.worker)
+
     def test_q_and_ctrl_c_bytes_interrupt_and_non_tty_does_not_read(self):
         display = TerminalProgress(Path('.'))
         with patch('inc.terminal.select.select') as ready:

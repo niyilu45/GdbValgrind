@@ -19,6 +19,7 @@ from .processes import ProcessSession, interrupt_scope
 from .xmlstream import XMLStream
 from .terminal import TerminalProgress
 from .output import prepare_output, COLLECTION_FILES
+from .program_output import ProgramOutput
 
 
 def summary_data(report):
@@ -119,7 +120,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
                 saved.write_text(render_html(detailed), encoding='utf-8')
                 os.replace(saved, directory / 'report.html')
         if display is not None:
-            display.render(summary, state, live.server.origin + '/' if live else '')
+            display.update(summary, state, live.server.origin + '/' if live else '')
 
     print('采集目录: ' + str(directory) + '\n采集时按 q（无需回车）或 Ctrl+C 中断；之后可对 errors.xml 生成报告或自动分析。', flush=True)
     with ExitStack() as files:
@@ -130,16 +131,25 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
         diagnostics = files.enter_context((directory / 'launcher.log').open('wb'))
         target_input = files.enter_context(open(stdin_file, 'rb')) if stdin_file else subprocess.DEVNULL
         display = files.enter_context(TerminalProgress(directory, started_at, started_clock))
+        display.update(summary_data(report_from_root(stream.root, xml_path)), state, live.server.origin + '/' if live else '')
+        display.start_updates()
+        transport = None
         try:
+            if os.name == 'posix':
+                transport = files.enter_context(ProgramOutput(output, diagnostics))
             with ProcessSession() as processes:
                 process = processes.launch([shutil.which('valgrind'), '--tool=memcheck', '--xml=yes',
                                             '--xml-file=' + str(xml_path), '--log-file=' + str(directory / 'valgrind.log'),
                                             '--leak-check=full', '--show-leak-kinds=all', '--track-origins=yes',
                                             '--error-limit=no', str(executable.resolve())] + list(command[1:]),
-                                           cwd=workdir, stdin=target_input, stdout=output, stderr=diagnostics)
+                                           cwd=workdir, stdin=target_input,
+                                           stdout=transport.stdout if transport else output,
+                                           stderr=transport.stderr if transport else diagnostics)
                 publish(True)
                 while True:
                     display.check_quit()
+                    if transport is not None and transport.error:
+                        raise OSError('程序输出读取失败: ' + str(transport.error))
                     consume(reader)
                     publish()
                     result = process.poll()
@@ -158,6 +168,9 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
             # bytes they flushed during shutdown and leave an atomic checkpoint.
             with interrupt_scope(signal.SIG_IGN):
                 try:
+                    if transport is not None:
+                        transport.close()
+                    display.stop_updates()
                     consume(reader, limit=None)
                     if stream.started and not parse_failure:
                         stream.finish()

@@ -8,6 +8,7 @@ import sys
 import time
 import unicodedata
 import select
+import threading
 
 
 def clip(text, width):
@@ -35,6 +36,38 @@ class TerminalProgress:
         self.streams = []
         self.keyboard = None
         self.terminal_settings = None
+        self.worker = None
+        self.stopping = threading.Event()
+        self.snapshot = None
+        self.refresh_error = None
+
+    def start_updates(self):
+        if not self.active or self.worker is not None:
+            return
+        def refresh():
+            while not self.stopping.is_set():
+                try:
+                    if self.snapshot is not None:
+                        self.render(*self.snapshot)
+                except Exception as exc:
+                    self.refresh_error = exc
+                    return
+                self.stopping.wait(0.2)
+        self.worker = threading.Thread(target=refresh, name='aivalgrind-display', daemon=True)
+        self.worker.start()
+
+    def update(self, summary, state, url=''):
+        self.snapshot = (summary, state, url)
+        if self.worker is None:
+            self.render(summary, state, url)
+
+    def stop_updates(self):
+        self.stopping.set()
+        if self.worker is not None:
+            self.worker.join(timeout=2)
+            if self.worker.is_alive():
+                raise OSError('终端刷新线程未能及时退出，请检查终端连接')
+            self.worker = None
 
     def elapsed(self):
         return max(0, time.monotonic() - self.clock)
@@ -122,6 +155,7 @@ class TerminalProgress:
         self.screen.flush()
 
     def __exit__(self, *exc):
+        self.stop_updates()
         try:
             if self.active:
                 self.screen.write('\x1b[?25h\x1b[?1049l')
