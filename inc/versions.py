@@ -6,6 +6,7 @@ import sys
 
 
 def print_tool_versions(feature, debug_enabled=False):
+    info = {'feature': feature, 'tools': ['Python ' + platform.python_version()]}
     print('[运行环境] 功能: ' + feature, flush=True)
     print('  Python: %s | %s' % (platform.python_version(), sys.executable), flush=True)
     names = []
@@ -16,6 +17,7 @@ def print_tool_versions(feature, debug_enabled=False):
     for name in names:
         path = shutil.which(name)
         if not path:
+            info['tools'].append(name + ': 未找到')
             print('  %s: 未找到（PATH）' % name, flush=True)
             continue
         print('  %s: %s | 正在读取版本（最多 3 秒）' % (name, path), flush=True)
@@ -30,11 +32,13 @@ def print_tool_versions(feature, debug_enabled=False):
             version = lines[0][:300] if lines else '没有版本输出'
             if result.returncode:
                 version = '版本查询失败（退出码 %s）：%s' % (result.returncode, version)
-            print('    ' + version, flush=True)
         except subprocess.TimeoutExpired:
-            print('    版本查询超时；未确认版本', flush=True)
+            version = '版本查询超时；未确认版本'
         except OSError as exc:
-            print('    版本查询失败：' + str(exc), flush=True)
+            version = '版本查询失败：' + str(exc)
+        print('    ' + version, flush=True)
+        info['tools'].append(name + ': ' + version)
     if not names:
         print('  此功能只需 Python 标准库，不调用 Valgrind / GDB / vgdb。', flush=True)
+    return info
 

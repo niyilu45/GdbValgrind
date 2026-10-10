@@ -56,7 +56,7 @@ def export_report(xml_path: PathLike, output_path: PathLike = "report.html", *,
     if Path(xml_path).resolve() == Path(output_path).resolve():
         raise ValueError("输出文件不能覆盖输入 XML")
     report = core.load_report(xml_path, project_dir)
-    Path(output_path).write_text(core.render_html(report), encoding="utf-8")
+    core.save_report(report, output_path)
     return report
 
 

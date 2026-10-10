@@ -25,16 +25,11 @@ function setup(report, environment={}){
  return {ids,run:s=>vm.runInContext(s,context)};
 }
 const {ids,run}=setup(original);
-let sourceHTML='',opened=[];
-const viewer=setup(original,{Blob:class {constructor(parts){sourceHTML=parts.join('')}},
- URL:{createObjectURL(){return 'blob:source'},revokeObjectURL(){}},
- window:{open(...args){opened=args}},setTimeout(){}});
+let opened=[];
+const viewer=setup(original,{window:{open(...args){opened=args}}});
 viewer.run('openSourceFile(report.errors[0].stacks[0].frames[0])');
 assert.equal(opened[1],'_blank');assert(opened[2].includes('noopener'));
-assert(sourceHTML.includes('id="L1"'));assert(sourceHTML.includes('class="hit"'));
-assert(sourceHTML.includes('源码快照'));
-viewer.run('report.source_files[report.errors[0].stacks[0].frames[0].source_file_id].lines=["<script>alert(1)</script>"];openSourceFile(report.errors[0].stacks[0].frames[0])');
-assert(!sourceHTML.includes('<script>'));assert(sourceHTML.includes('&lt;script&gt;'));
+assert(opened[0].startsWith('/source/'));assert(opened[0].includes('.html#L'));
 assert.equal(ids.get('list').children.filter(n=>n.dataset.errorId).length,2,'both sample errors visible');
 ids.get('list').children[1].onclick();
 assert(ids.get('detail').textContent.includes(original.errors[1].id),'history failure must not block switching');
@@ -98,11 +93,11 @@ filteredReport.errors.push({...filteredReport.errors[0],id:'reachable',kind:'Lea
 const check=setup(filteredReport);
 check.ids.get('fileFilter').value='only.c';check.ids.get('fileFilter').oninput();
 assert.equal(check.run('filtered.length'),1);
-assert.equal(check.ids.get('nav').children[0].children[1].textContent,'1');
-assert.equal(check.ids.get('nav').children.find(n=>n.children[0].textContent==='仍可访问').children[1].textContent,'1');
+assert.equal(check.ids.get('nav').children[0].children[1].textContent,'1/3');
+assert.equal(check.ids.get('nav').children.find(n=>n.children[0].textContent==='仍可访问').children[1].textContent,'1/1');
 check.ids.get('fileFilter').value='missing.c';check.ids.get('fileFilter').oninput();
 assert.equal(check.run('filtered.length'),0);
-assert.equal(check.ids.get('nav').children.find(n=>n.children[0].textContent==='仍可访问').children[1].textContent,'0');
+assert.equal(check.ids.get('nav').children.find(n=>n.children[0].textContent==='仍可访问').children[1].textContent,'0/1');
 for(const label of ['非法写入','确定泄漏'])assert.equal(check.ids.get('nav').children.find(n=>n.children[0].textContent===label).className,'danger-kind');
 check.ids.get('resetFilters').onclick();check.ids.get('list').children[0].onclick();
 assert.equal(check.ids.get('detail').children[0].textContent,'查看代码文件');

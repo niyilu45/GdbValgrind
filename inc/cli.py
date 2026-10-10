@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 import subprocess
 import sys
-from .core import load_report, render_html, serve, run_debug
+from .core import load_report, render_html, serve, run_debug, save_report
 from .collect import collect_run, print_summary, summary_data
 from .workflow import analyze_run
 from .versions import print_tool_versions
@@ -58,15 +58,15 @@ def main(argv=None):
     args = parser.parse_args(argv)
     args.command = command
     try:
-        print_tool_versions(args.action, debug_enabled=args.action == 'serve' and bool(command))
+        runtime_info = print_tool_versions(args.action, debug_enabled=args.action == 'serve' and bool(command))
         if args.action == 'analyze':
             return analyze_run(command, args.output_dir, xml_path=args.xml, project_dir=args.project_dir,
                                cwd=args.cwd, stdin_file=args.stdin_file, live_port=None if args.no_web else args.port,
-                               plain_terminal=args.plain_terminal, output_mode=args.output_mode)
+                               plain_terminal=args.plain_terminal, output_mode=args.output_mode, runtime_info=runtime_info)
         if args.action == 'collect':
             return collect_run(command, args.output_dir, cwd=args.cwd, stdin_file=args.stdin_file, interval=args.interval,
                                live_port=None if args.no_web else args.port, project_dir=args.project_dir,
-                               plain_terminal=args.plain_terminal, output_mode=args.output_mode)
+                               plain_terminal=args.plain_terminal, output_mode=args.output_mode, runtime_info=runtime_info)
         print('正在解析 XML、去重并读取源码，请稍候……', flush=True)
         report = load_report(args.xml, args.project_dir, allow_partial=not args.strict_xml)
         args.navigation_errors = report['errors']
@@ -81,7 +81,7 @@ def main(argv=None):
             if args.output.resolve() == args.xml.resolve():
                 raise ValueError("输出文件不能覆盖输入 XML")
             print('正在生成并保存 HTML 报告……', flush=True)
-            args.output.write_text(render_html(report), encoding="utf-8")
+            save_report(report, args.output)
             print("已生成 " + str(args.output.resolve()) + "，去重后 " + str(len(report["errors"])) + " 类错误位置，记录次数 " + str(report["occurrences"]))
         elif args.action == "serve":
             serve(report, args)

@@ -27,6 +27,7 @@ from .commands import command_metadata
 from .navigation import GDB_NAVIGATION_SCRIPT
 from copy import copy
 from .output import register_capture
+from .sourcepages import browser_report, source_page
 
 
 def integer(value, default=0):
@@ -37,7 +38,7 @@ def integer(value, default=0):
 
 
 def normalized(text):
-    return re.sub(r"0x[0-9a-fA-F]+", "<address>", text or "")
+    return ' '.join(re.sub(r"0x[0-9a-fA-F]+", "<address>", text or "").split())
 
 
 def diagnostic_label(text):
@@ -92,7 +93,7 @@ class Sources:
                 self.cache[path] = path.read_text(encoding="utf-8", errors="replace").splitlines()
             lines = self.cache[path]
             key = hashlib.sha256(str(path).encode('utf-8')).hexdigest()[:16]
-            self.files[key] = {'path': str(path), 'lines': lines}
+            self.files[key] = {'path': str(path)}
             frame['source_file_id'] = key
             line = integer(frame.get("line"))
             if not 1 <= line <= len(lines):
@@ -105,6 +106,13 @@ class Sources:
 
 def frame_key(frame, function_only=False):
     if frame.get("file") and integer(frame.get("line")) > 0:
+        if function_only:
+            # Uninitialized diagnostics from the same source location can be
+            # emitted through different loaded copies of the same module.
+            directory = frame.get('dir', '').replace('\\', '/')
+            filename = frame['file'].replace('\\', '/')
+            source = str(PurePosixPath(directory) / filename)
+            return (frame.get('fn', ''), source, integer(frame['line']))
         return tuple(frame.get(k, "") for k in ("obj", "fn", "dir", "file", "line"))
     if function_only and frame.get('fn') and frame.get('fn') != '???':
         # Named library frames often have no line information. ASLR and the
@@ -411,19 +419,13 @@ def _run_debug(error, args, processes):
                         print(log.read().decode(errors='replace'), flush=True)
 
 
-def render_html(report, token=""):
-    # Full source already lives once in source_files. Do not repeat the same
-    # 21-line excerpts for every frame of every error in the offline artifact.
-    files = report.get('source_files', {})
-    errors = []
-    for error in report['errors']:
-        item = {k: v for k, v in error.items() if k != 'unique_ids'}
-        item['stacks'] = [{**stack, 'frames': [
-            {k: v for k, v in frame.items() if k != 'source' or frame.get('source_file_id') not in files}
-            for frame in stack['frames']]} for stack in error['stacks']]
-        errors.append(item)
-    payload = json.dumps({**report, 'errors': errors, "token": token}, ensure_ascii=False, separators=(',', ': ')).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+def render_html(report, token="", source_base='/source/'):
+    payload = json.dumps({**browser_report(report, source_base), "token": token}, ensure_ascii=False, separators=(',', ': ')).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     return HTML.replace("__REPORT_DATA__", payload)
+
+
+def save_report(report, output_path):
+    Path(output_path).write_text(render_html(report, source_base=None), encoding='utf-8')
 
 
 class DebugServer(http.server.ThreadingHTTPServer):
@@ -466,6 +468,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.valid_host():
             return self.reply(403, {"message": "Host 不允许"})
+        if self.path.startswith('/source/'):
+            return self.reply_source(self.server.report)
         if self.path == "/":
             return self.reply(200, render_html(self.server.report, self.server.token if self.server.enabled else ""), "text/html; charset=utf-8")
         if self.path == "/api/status" and secrets.compare_digest(self.headers.get("X-Debug-Token", ""), self.server.token):
@@ -473,6 +477,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 state = dict(self.server.state)
             return self.reply(200, state)
         self.reply(404, {"message": "未找到"})
+
+    def reply_source(self, report):
+        match = re.fullmatch(r'/source/([0-9a-f]{16})\.html', self.path)
+        file = report.get('source_files', {}).get(match.group(1)) if match else None
+        if file is None:
+            return self.reply(404, {'message': '源码未找到'})
+        try:
+            root = Path(report['project']).resolve()
+            path = Path(file['path']).resolve()
+            if not report['project'] or not path.is_relative_to(root):
+                return self.reply(403, {'message': '源码路径已越过工程目录'})
+            lines = path.read_text(encoding='utf-8', errors='replace').splitlines()
+        except (OSError, KeyError, ValueError):
+            return self.reply(404, {'message': '原始源码已移动、删除或不可读取'})
+        return self.reply(200, source_page({'path': str(path), 'lines': lines}), 'text/html; charset=utf-8')
 
     def do_POST(self):
         if not self.valid_host() or self.headers.get("Origin") != self.server.origin or not secrets.compare_digest(self.headers.get("X-Debug-Token", ""), self.server.token):

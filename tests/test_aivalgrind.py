@@ -62,8 +62,8 @@ class ReportTests(unittest.TestCase):
         frames = [e['stacks'][0]['frames'][0] for e in report['errors']]
         self.assertEqual(frames[0]['source_file_id'], frames[1]['source_file_id'])
         source = report['source_files'][frames[0]['source_file_id']]
-        self.assertEqual(len(source['lines']), 40)
-        self.assertEqual(source['lines'][-1], 'source line 40')
+        self.assertNotIn('lines', source)
+        self.assertEqual(source['path'], str(self.root / 'src/demo.c'))
         self.assertEqual(self.load(xml(error()), project=False)['source_files'], {})
 
     def test_auxiliary_instance_values_merge_and_preserve_first(self):
@@ -114,6 +114,13 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(len(report['errors']), 1)
         self.assertEqual(report['errors'][0]['records'], 2)
         self.assertEqual(len(self.load(xml(first + second.replace('<line>15', '<line>16')))['errors']), 2)
+
+    def test_uninitialized_source_identity_ignores_module_copy_and_formatting(self):
+        first = error(kind='UninitValue', what='Use of uninitialised value of size 8')
+        second = first.replace('0x1</unique>', '0x2</unique>').replace('/app/demo', '/other/demo').replace('of size', 'of  size').replace('/old/project/src', '/old/project/./src').replace('<line>15', '<line>015')
+        report = self.load(xml(first + second))
+        self.assertEqual(len(report['errors']), 1)
+        self.assertEqual(report['errors'][0]['records'], 2)
 
     def test_html_omits_repeated_source_excerpts_without_changing_report(self):
         report = self.load(xml(error() + error('2', frames=frame(line=30))))

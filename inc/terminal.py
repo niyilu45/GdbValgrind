@@ -25,7 +25,7 @@ def clip(text, width):
 
 
 class TerminalProgress:
-    def __init__(self, directory, started_at=None, started_clock=None, enabled=True):
+    def __init__(self, directory, started_at=None, started_clock=None, enabled=True, runtime_info=None):
         self.directory = directory
         self.started_at = started_at or datetime.now().astimezone().isoformat(timespec='seconds')
         self.clock = time.monotonic() if started_clock is None else started_clock
@@ -41,10 +41,16 @@ class TerminalProgress:
         self.snapshot = None
         self.refresh_error = None
         self.phase = ('准备启动', time.monotonic())
+        self.phase_totals = {}
+        self.runtime_info = runtime_info
         self.announced_phases = set()
 
     def set_phase(self, text):
-        self.phase = (text, time.monotonic())
+        previous, started = self.phase
+        if previous != text:
+            now = time.monotonic()
+            self.phase_totals[previous] = self.phase_totals.get(previous, 0) + max(0, now - started)
+            self.phase = (text, now)
         if not self.active and text not in self.announced_phases:
             self.announced_phases.add(text)
             print('[阶段] ' + text, flush=True)
@@ -150,12 +156,19 @@ class TerminalProgress:
         phase, phase_started = self.phase
         rows = ['AiValgrind 内存检测 | ' + {'running': '运行中', 'finished': '已结束', 'failed': '失败', 'interrupted': '已中断'}.get(state, state),
                 '开始: ' + self.started_at + ' | 已运行: ' + duration,
-                '当前阶段: %s | 本阶段耗时: %.1f 秒' % (phase, max(0, time.monotonic() - phase_started)),
+                '当前阶段: %s' % phase,
+                '本阶段耗时: 累计 %.1f 秒（多次执行相加，不是总运行时长）' % (self.phase_totals.get(phase, 0) + max(0, time.monotonic() - phase_started)),
                 '错误: %d 种 / %d 个位置 / %s%d 次' % (len(summary['kinds']), summary['locations'], prefix, summary['occurrences'])]
+        if self.runtime_info:
+            feature = self.runtime_info['feature']
+            task = '自动分析 analyze · 第 1/3 步：内存检测' if feature == 'analyze' else '内存检测 collect'
+            rows.insert(1, '当前任务: ' + task)
+            rows[2:2] = ['工具: ' + tool for tool in self.runtime_info['tools']]
+            rows.insert(2 + len(self.runtime_info['tools']), '要求: Python 3.9+；Valgrind 支持 --show-leak-kinds' + ('；GDB 含 Python' if feature == 'analyze' else ''))
         kinds = sorted(summary['kinds'].items())
         # Reserve the footer and several program-output rows. Rotate overflowing
         # types instead of silently clipping them off the right edge or bottom.
-        page_size = max(1, height - 12)
+        page_size = max(1, height - len(rows) - 8)
         pages = max(1, (len(kinds) + page_size - 1) // page_size)
         page = (elapsed // 5) % pages
         heading = '错误类型明细（去重位置 / 发生次数）'

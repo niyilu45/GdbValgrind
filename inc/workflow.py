@@ -12,7 +12,7 @@ from .output import prepare_output
 
 
 def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=None, stdin_file=None, live_port=None,
-                plain_terminal=False, output_mode='pty'):
+                plain_terminal=False, output_mode='pty', runtime_info=None):
     """Collect if needed, export HTML, then replay with automatic value capture.
 
     Stops at each runtime error in GDB; continue/quit remain interactive.
@@ -53,7 +53,7 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
     else:
         print('步骤 1/3：首次运行 Valgrind，保存 XML。此流程随后会再次运行目标程序。', flush=True)
         collect_run(command, directory, cwd=cwd, stdin_file=stdin_file, live_port=live_port, project_dir=project_dir,
-                    plain_terminal=plain_terminal, output_mode=output_mode)
+                    plain_terminal=plain_terminal, output_mode=output_mode, runtime_info=runtime_info)
         source = directory / 'errors.xml'
     print('步骤 2/3：生成 HTML 报告。', flush=True)
     report = export_report(source, directory / 'report.html', project_dir=project_dir)

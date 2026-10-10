@@ -4,6 +4,7 @@ import signal
 
 from .core import DebugServer, Handler, render_html
 from .processes import interrupt_scope
+from .sourcepages import browser_report
 
 
 class LiveHandler(Handler):
@@ -14,11 +15,13 @@ class LiveHandler(Handler):
             report, revision = self.server.report, self.server.revision
         if self.path == '/':
             return self.reply(200, render_html(report), 'text/html; charset=utf-8')
+        if self.path.startswith('/source/'):
+            return self.reply_source(report)
         if self.path.startswith('/api/live?revision='):
             previous = self.path.split('=', 1)[1]
             payload = {'revision': revision}
             if previous != str(revision):
-                payload['report'] = report
+                payload['report'] = browser_report(report)
             return self.reply(200, payload)
         return self.reply(404, {'message': '未找到'})
 

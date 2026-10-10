@@ -20,7 +20,7 @@ class LibraryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / 'report.html'
             report = export_report(ROOT / 'examples/sample.xml', target, project_dir=ROOT)
-            self.assertEqual(target.read_text(encoding='utf-8'), render_html(report))
+            self.assertEqual(target.read_text(encoding='utf-8'), render_html(report, source_base=None))
             self.assertEqual(len(report['errors']), 2)
         with self.assertRaises(ValueError):
             export_report(ROOT / 'examples/sample.xml', ROOT / 'examples/sample.xml')
@@ -65,7 +65,7 @@ class LibraryTests(unittest.TestCase):
             for command in commands:
                 result = subprocess.run(command, cwd=directory, capture_output=True, timeout=15)
                 self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(old.read_bytes(), example.read_bytes())
+            self.assertEqual(old.read_bytes().replace(b'old.html.sources/', b'SOURCES/'), example.read_bytes().replace(b'example.html.sources/', b'SOURCES/'))
 
     def test_example_calls_public_api(self):
         import main

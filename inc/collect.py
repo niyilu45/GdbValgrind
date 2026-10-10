@@ -44,7 +44,7 @@ def print_summary(summary):
 
 
 def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0, live_port=None, project_dir=None,
-                plain_terminal=False, output_mode='pty'):
+                plain_terminal=False, output_mode='pty', runtime_info=None):
     """Run Memcheck, preserving errors.xml and atomic status.json even on Ctrl+C.
 
     Reuses directories by removing only manifest-owned outputs. Interruption raises
@@ -128,7 +128,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
                 detailed['debug_command'] = command_metadata(stream.root, xml_path, project_dir)
                 live.update(detailed, state)
                 saved = directory / 'report.html.tmp'
-                saved.write_text(render_html(detailed), encoding='utf-8')
+                saved.write_text(render_html(detailed, source_base=None), encoding='utf-8')
                 os.replace(saved, directory / 'report.html')
         if display is not None:
             display.update(summary, state, live.server.origin + '/' if live else '')
@@ -142,7 +142,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
         output = files.enter_context((directory / 'program.log').open('wb'))
         diagnostics = files.enter_context((directory / 'launcher.log').open('wb'))
         target_input = files.enter_context(open(stdin_file, 'rb')) if stdin_file else subprocess.DEVNULL
-        display = files.enter_context(TerminalProgress(directory, started_at, started_clock, enabled=not plain_terminal))
+        display = files.enter_context(TerminalProgress(directory, started_at, started_clock, enabled=not plain_terminal, runtime_info=runtime_info))
         display.update(summary_data(report_from_root(stream.root, xml_path)), state, live.server.origin + '/' if live else '')
         display.start_updates()
         transport = None

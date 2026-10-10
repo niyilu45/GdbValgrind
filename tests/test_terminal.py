@@ -16,6 +16,28 @@ class TTY(io.StringIO):
 
 
 class TerminalTests(unittest.TestCase):
+    def test_phase_accumulates_across_cycles_and_versions_remain_visible(self):
+        screen = TTY()
+        with patch('sys.stdout', screen), patch('inc.terminal.time.monotonic', return_value=0):
+            display = TerminalProgress(Path('.'), started_clock=0, runtime_info={
+                'feature': 'analyze', 'tools': ['Python 3.9.6', 'valgrind: valgrind-3.8.0', 'gdb: 10.2', 'vgdb: unknown']})
+            display.active = True
+            display.set_phase('等待新增错误')
+        with patch('inc.terminal.time.monotonic', return_value=1):
+            display.set_phase('解析 XML')
+        with patch('inc.terminal.time.monotonic', return_value=2):
+            display.set_phase('等待新增错误')
+        summary = {'counts_complete': False, 'kinds': {}, 'locations': 0, 'occurrences': 0}
+        with patch('inc.terminal.time.monotonic', return_value=5), patch('inc.terminal.shutil.get_terminal_size', return_value=os.terminal_size((130, 28))):
+            display.set_phase('等待新增错误')  # Same phase must not reset the clock.
+            display.render(summary, 'running')
+            display.render(summary, 'running')
+        output = screen.getvalue()
+        self.assertEqual(output.count('valgrind-3.8.0'), 2)
+        self.assertIn('第 1/3 步', output)
+        self.assertIn('累计 4.0 秒', output)
+        self.assertIn('已运行: 00:00:05', output)
+
     def test_error_types_show_counts_and_rotate_without_losing_program_output(self):
         screen = TTY()
         summary = {'counts_complete': False, 'locations': 8, 'occurrences': 24,
