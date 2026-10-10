@@ -392,10 +392,12 @@ python3 -m unittest discover -s tests -v
 实时页面仅在数据变化时重建对应列表、类型目录和作者选项，选择作者时不刷新正在操作的下拉框；取消过时请求，隐藏标签页暂停轮询。源码先显示，blame 随后补充；详情请求超时或断连保留已显示内容，并提供重试按钮。后台复用工程文件索引及有限源码缓存，数据库暂时锁定时重试。类型/作者统计由数据库增量维护，普通刷新不再全表分组；关键词和文件子串筛选仍需要查询匹配记录。升级后请重启采集并刷新 HTTP 页面，让新的数据库结构和页面脚本生效。
 问题筛选支持 Git blame 作者：只取主错误栈最内层帧（#0:0）实际报错行的最后修订作者，不计入上下文行、父栈或其他来源栈。缺失时归为“无作者信息”，不会向父栈回退。作者筛选可与关键词、文件和问题类型组合使用，目录数量同步显示筛选后 / 总数；实时更新保留当前筛选并补充新作者。隐藏 blame 注释不影响作者筛选。
 
-单独执行步骤三（建议使用新的结果目录，保留前两步的文件）：
+步骤三变量通过独立数据文件加载，显示在匹配错误的主调用栈帧下方。匹配要求实际错误描述、源码路径、行号和采集范围内的主调用栈一致且唯一；无法唯一匹配时不填入堆栈，原始现场保留在 captures 目录，状态栏显示未匹配数量。
+
+单独执行步骤三（支持与步骤二使用同一结果目录，不清理已有文件）：
 
 ```bash
-python3 /opt/GdbValgrind/aivalgrind.py analyze --step3-only --xml /data/run/errors.xml --base-report /data/run/report.html --output-dir /data/step3 -- /path/to/app
+python3 /opt/GdbValgrind/aivalgrind.py analyze --step3-only --xml /data/run/errors.xml --base-report /data/run/report.html --output-dir /data/run -- /path/to/app
 ```
 
-有配套 `run.json` 时可省略 `--` 后的程序参数。`--base-report` 默认是 XML 同目录的 `report.html`，也可指定步骤二保存的其他 HTML。步骤三沿用该 HTML，不重新查询源码或 blame；每两秒检查新现场，变化时更新 `/data/step3/full-report.html`。打开页面后通过同目录的 `capture-updates.js` 每两秒增量更新现场，不刷新整页，保留筛选、展开和阅读位置；结束或中断后保存最终版并停止轮询。实时浏览需同时保留该文件，最终 HTML 可单独离线查看。报告顶部“查看步骤三变量现场”链接可查看内嵌的变量、调用栈及内存诊断，不会将所有现场错误地关联到历史第一条错误。通过 SSH 使用时，需要浏览服务器上持续更新的文件（例如静态 HTTP 服务加 SSH 转发）；提前复制到本机的文件不会同步变化。
+有配套 `run.json` 时可省略 `--` 后的程序参数。`--base-report` 默认是 XML 同目录的 `report.html`，也可指定步骤二保存的其他 HTML。步骤三沿用该 HTML，不重新查询源码或 blame；每两秒检查新现场，变化时只更新配套 `capture-updates.js`；`full-report.html` 首次接入变量查看功能后不再重写。打开页面后通过同目录的 `capture-updates.js` 每两秒增量更新现场，不刷新整页，保留筛选、展开和阅读位置；结束或中断后保存最终版并停止轮询。实时浏览需同时保留该文件，变量独立保存在 `capture-updates.js` 和 `captures/session-*` 中，查看现场时请保留配套 JS 文件。报告顶部“查看步骤三变量现场”链接可查看独立数据文件中的变量、调用栈及内存诊断，不会将所有现场错误地关联到历史第一条错误。通过 SSH 使用时，需要浏览服务器上持续更新的文件（例如静态 HTTP 服务加 SSH 转发）；提前复制到本机的文件不会同步变化。

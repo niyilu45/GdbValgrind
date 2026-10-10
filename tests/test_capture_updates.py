@@ -17,19 +17,23 @@ class Element {
  remove(){}
 }
 const area=new Element(),status=new Element();
-global.window={};global.document={head:new Element(),getElementById:id=>id==='capture-items'?area:status,createElement:()=>new Element()};
+const frame=new Element();frame.dataset.frameKey='0:0';frame.open=true;area.append(frame);
+global.report={errors:[{id:'one',what:'Invalid write of size 4',stacks:[{frames:[{local_file:'/src/a.c',line:10,fn:'main'}]}]}]};
+global.selected='one';global.detail=()=>{};
+global.window={};global.document={head:new Element(),getElementById:id=>id==='detail'?area:status,createElement:()=>new Element()};
 global.setTimeout=()=>1;global.clearTimeout=()=>{};
 '''
         checks = r'''
-window.aivCaptureUpdate({live:true,items:[{id:'one',text:'x=1'}]});
-const original=area.children[0];original.open=true;
-window.aivCaptureUpdate({live:true,items:[{id:'one',text:'x=2'},{id:'two',text:'y=3'}]});
-assert.strictEqual(area.children[0],original);
-assert.strictEqual(original.open,true);
-assert.strictEqual(original.querySelector().textContent,'x=2');
-assert.strictEqual(area.children.length,2);
-window.aivCaptureUpdate({live:false,items:[{id:'one',text:'x=2'},{id:'two',text:'y=3'}]});
-assert.strictEqual(area.children.length,2);
+const snapshot={requested_error_id:'wrong',valgrind_error:'Invalid write of size 4',frames:[{file:'/src/a.c',line:10,function:'main',variables:[{name:'x',value:'42'}]}]};
+window.aivCaptureUpdate({live:true,items:[{id:'capture',snapshot}]});
+const panel=frame.children[0];assert(panel.textContent.includes('x = 42'));
+assert.strictEqual(frame.open,true);
+window.aivCaptureUpdate({live:true,items:[{id:'capture',snapshot}]});
+assert.strictEqual(frame.children[0],panel);assert.strictEqual(frame.children.length,1);
+const other={...snapshot,valgrind_error:'Invalid read of size 4'};
+window.aivCaptureUpdate({live:false,items:[{id:'other',snapshot:other}]});
+assert.strictEqual(frame.children.length,1);
+assert(status.textContent.includes('1 个现场未能唯一匹配'));
 '''
         script = SCRIPT.replace('<script>', '').replace('</script>', '')
         result = subprocess.run(['node','-e',setup+script+checks], capture_output=True, text=True)

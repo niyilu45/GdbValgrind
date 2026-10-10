@@ -3,16 +3,16 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-import html
 import threading
 import json
+import re
 from .capture_updates import SCRIPT as CAPTURE_UPDATES
 
 from . import core
 from .api import DebugOptions, debug_error
 from .collect import collect_run
 from .processes import ProcessSession
-from .output import prepare_output
+from .output import prepare_output, prepare_capture_output
 from .terminal import ReportProgress
 from .store import load_replay
 
@@ -64,10 +64,10 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
             raise ValueError('GDB Python 预检查超过 5 秒，未启动目标程序') from exc
         if probe.returncode:
             raise ValueError('自动采集需要带 Python 支持的 GDB，未启动目标程序。\n' + out + err)
-    if source:
+    if source and not step3_only:
         prepare_output(directory, (['full-report.html', 'full-report.html.tmp', 'capture-updates.js', 'capture-updates.js.tmp'] if step3_only else ['report.html', 'report.html.tmp', 'full-report.html', 'full-report.html.tmp', 'capture-updates.js', 'capture-updates.js.tmp']),
                        [source, source.parent / 'run.json', base_path, stdin_file, Path(cwd or '.') / command[0]])
-    else:
+    elif not source:
         print('步骤 1/3：首次运行 Valgrind，保存 XML。此流程随后会再次运行目标程序。', flush=True)
         collect_run(command, directory, cwd=cwd, stdin_file=stdin_file, live_port=live_port, project_dir=project_dir,
                     plain_terminal=plain_terminal, output_mode=output_mode, runtime_info=runtime_info)
@@ -103,6 +103,7 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
     options = DebugOptions(command, cwd=cwd, stdin_file=stdin_file, auto_values=True,
                            capture_dir=directory / 'captures', auto_continue=not pause_on_error)
     base_html = base_html or (directory / 'report.html').read_text(encoding='utf-8')
+    prepare_capture_output(directory)
     previous = set((directory / 'captures').glob('session-*/error-*.txt'))
     stop = threading.Event()
     last_snapshot = None
@@ -136,27 +137,31 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
 
 
 def save_combined_report(report, directory, *, base_html=None, previous=(), live=False):
-    """Embed saved capture text, without incorrectly matching replay errors to XML IDs."""
-    sections = []
+    """Update the sidecar only; initialize the report viewer once."""
     items = []
     for path in sorted((directory / 'captures').glob('session-*/error-*.txt')):
         if path in previous:
             continue
         identity = str(path.relative_to(directory))
         text = path.read_text(encoding='utf-8', errors='replace')
-        items.append({'id':identity, 'text':text})
-        sections.append('<details data-capture="' + html.escape(identity, quote=True) + '"><summary>' + html.escape(identity) +
-                        '</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' +
-                        html.escape(text) + '</pre></details>')
-    content = base_html or core.render_html(report, source_base=None)
-    appendix = '<section id="capture-results" style="padding:24px"><h2>步骤三：本次运行的变量现场</h2><p>本次实际错误不保证与历史 XML 错误一一对应。</p><p id="capture-status">' + ('采集中，内容自动更新' if live else '采集已结束') + '</p><div id="capture-items">' + ''.join(sections) + '</div></section>'
-    if live:
-        appendix += CAPTURE_UPDATES
-    content = content.replace('</body>', appendix + '</body>')
-    content = content.replace('<body>', '<body><a href="#capture-results">查看步骤三变量现场</a>', 1)
+        item = {'id':identity, 'text':text}
+        try:
+            item['snapshot'] = json.loads(path.with_suffix('.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            pass
+        items.append(item)
     update_file = directory / 'capture-updates.js.tmp'
     update_file.write_text('window.aivCaptureUpdate(' + json.dumps({'live':live,'items':items},ensure_ascii=True).replace('<','\\u003c') + ');', encoding='utf-8')
     update_file.replace(directory / 'capture-updates.js')
+    output = directory / 'full-report.html'
+    content = output.read_text(encoding='utf-8') if output.exists() else (base_html or core.render_html(report, source_base=None))
+    if 'aiv-stack-captures-v2' in content:
+        return
+    content = re.sub(r'<section id="capture-results".*?</section>\s*(?:<script>.*?</script>)?', '', content, flags=re.S)
+    content = content.replace('<a href="#capture-results">查看步骤三变量现场</a>', '')
+    appendix = '<section id="capture-results" style="padding:24px"><h2>步骤三变量状态</h2><p>变量显示在对应错误的主调用栈帧下方。</p><p id="capture-status">正在读取变量数据…</p></section>' + CAPTURE_UPDATES
+    content = content.replace('</body>', appendix + '</body>')
+    content = content.replace('<body>', '<body><a href="#capture-results">查看步骤三变量现场</a>', 1)
     temporary = directory / 'full-report.html.tmp'
     temporary.write_text(content, encoding='utf-8')
     temporary.replace(directory / 'full-report.html')

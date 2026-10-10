@@ -9,9 +9,31 @@ from tests.test_aivalgrind import error
 
 
 class WorkflowTests(unittest.TestCase):
-    def run_case(self, *, saved=False, interrupted=False, errors=True, unsupported=False, report_interrupted=False, project=False, pause=False, tty=True, step3=False):
+    def test_append_preserves_previous_files_and_report_bytes(self):
+        from inc.output import prepare_capture_output, write_manifest
         with tempfile.TemporaryDirectory() as root:
-            output = Path(root) / 'new-run'
+            directory = Path(root)
+            original = '<html><head></head><body><p>source and blame</p></body></html>'
+            (directory/'full-report.html').write_text(original,encoding='utf-8')
+            (directory/'results.sqlite3').write_bytes(b'previous database')
+            write_manifest(directory, ['full-report.html','results.sqlite3'])
+            old = directory/'captures'/'session-old'
+            old.mkdir(parents=True)
+            (old/'error-1.txt').write_text('old capture')
+            prepare_capture_output(directory)
+            self.assertEqual((directory/'results.sqlite3').read_bytes(), b'previous database')
+            self.assertEqual((old/'error-1.txt').read_text(), 'old capture')
+            workflow.save_combined_report({}, directory, live=True)
+            first = (directory/'full-report.html').read_bytes()
+            (old/'error-2.txt').write_text('new variable')
+            workflow.save_combined_report({}, directory, live=False)
+            self.assertEqual((directory/'full-report.html').read_bytes(), first)
+            self.assertNotIn(b'new variable',first)
+            self.assertIn('new variable',(directory/'capture-updates.js').read_text())
+
+    def run_case(self, *, saved=False, interrupted=False, errors=True, unsupported=False, report_interrupted=False, project=False, pause=False, tty=True, step3=False, same_dir=False):
+        with tempfile.TemporaryDirectory() as root:
+            output = Path(root) if same_dir else Path(root) / 'new-run'
             xml = Path(root) / 'saved.xml'
             report = workflow.core.report_from_root(ET.fromstring('<valgrindoutput>'+ (error('1') if errors else '')+'</valgrindoutput>'), str(xml))
             report['debug_command'] = {'target_args': ['/srv/app', 'arg'],
@@ -20,7 +42,7 @@ class WorkflowTests(unittest.TestCase):
             if step3:
                 (Path(root) / 'report.html').write_text(workflow.core.render_html(report).replace('</body>', '<p>int marker;</p></body>'), encoding='utf-8')
             def debug(*args):
-                if step3:
+                if step3 and not same_dir:
                     self.assertFalse((output / 'report.html').exists())
                 else:
                     self.assertIn('report-data', (output / 'report.html').read_text(encoding='utf-8'))
@@ -31,10 +53,10 @@ class WorkflowTests(unittest.TestCase):
                     deadline = time.monotonic()+5
                     while time.monotonic()<deadline:
                         live = (output / 'full-report.html').read_text(encoding='utf-8')
-                        if 'value = &lt;42&gt;' in live:
+                        if 'value =' in (output / 'capture-updates.js').read_text(encoding='utf-8'):
                             break
                         time.sleep(.05)
-                    self.assertIn('value = &lt;42&gt;', live)
+                    self.assertNotIn('value = &lt;42&gt;', live)
                     self.assertNotIn('http-equiv="refresh"', live)
                     self.assertIn('aivCaptureUpdate', live)
                     self.assertIn('value =', (output / 'capture-updates.js').read_text(encoding='utf-8'))
@@ -68,7 +90,8 @@ class WorkflowTests(unittest.TestCase):
                     self.assertEqual(replay.call_count, 1 if errors else 0)
                     if errors:
                         combined = (output / 'full-report.html').read_text(encoding='utf-8')
-                        self.assertIn('value = &lt;42&gt;', combined)
+                        self.assertNotIn('value = &lt;42&gt;', combined)
+                        self.assertIn('value =', (output / 'capture-updates.js').read_text(encoding='utf-8'))
                         self.assertIn('report-data', combined)
                         self.assertNotIn('http-equiv="refresh"', combined)
                         self.assertEqual(replay.call_args.args[2].auto_continue, not pause)
@@ -92,3 +115,5 @@ class WorkflowTests(unittest.TestCase):
     def test_pause_mode_preserves_interactive_debugging(self): self.run_case(pause=True)
 
     def test_step3_only_merges_capture(self): self.run_case(saved=True, step3=True, project=True)
+
+    def test_step3_same_directory(self): self.run_case(saved=True, step3=True, same_dir=True)

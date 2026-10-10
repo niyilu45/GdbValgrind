@@ -102,3 +102,20 @@ def register_capture(session):
         data = read_manifest(root)
         if data:
             write_manifest(root, data['files'], data.get('sessions', []) + [session.name])
+
+
+def prepare_capture_output(directory):
+    """Register step-three outputs without cleaning any earlier stage or session."""
+    directory = Path(directory)
+    if directory.is_symlink():
+        raise ValueError('结果目录不能是符号链接')
+    directory.mkdir(parents=True, exist_ok=True)
+    previous = read_manifest(directory) or {'files':[], 'sessions':[]}
+    names = ['full-report.html', 'full-report.html.tmp', 'capture-updates.js', 'capture-updates.js.tmp']
+    for name in names:
+        path = directory / name
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError('输出位置包含链接或目录：' + str(path))
+        if path.exists() and name != 'full-report.html' and name not in previous['files']:
+            raise ValueError('已有文件无法确认归属，未修改：' + str(path))
+    write_manifest(directory, sorted(set(previous['files']) | set(names)), previous.get('sessions', []))
