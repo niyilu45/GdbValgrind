@@ -31,7 +31,7 @@ global.window={};global.document={head:new Element(),getElementById:id=>id==='de
 global.setTimeout=()=>1;global.clearTimeout=()=>{};
 '''
         checks = r'''
-const snapshot={requested_error_id:'wrong',valgrind_error:'Invalid write of size 4',frames:[{file:'/src/a.c',line:10,function:'main',variables:[{name:'x',value:'42'}]}]};
+const snapshot={association:{status:'verified'},requested_error_id:'wrong',valgrind_error:'Invalid write of size 4',frames:[{file:'/src/a.c',line:10,function:'main',variables:[{name:'x',value:'42'}]}]};
 const checkbox=status.previous.children[0];assert.strictEqual(checkbox.checked,true);assert.strictEqual(matchingRows().length,0);
 checkbox.onchange();assert.strictEqual(navigation.children[1].textContent,'0/1');
 window.aivCaptureUpdate({live:true,items:[{id:'capture',snapshot}]});
@@ -82,15 +82,17 @@ global.setTimeout=()=>1;global.clearTimeout=()=>{};
 const frame=new Element();frame.dataset.frameKey='0:1';nodes.detail.append(frame);
 '''
         checks = r'''
-const runtime=(file,status='available',parent=20)=>({valgrind_error:'==123== Invalid write of size 4',frames:[
+const runtime=(file,status='available',parent=20)=>({association:{status:'verified'},valgrind_error:'==123== Invalid write of size 4',frames:[
  {function:'wrapper'}, {file:'/build/src/./'+file,line:10,function:'foo',variables:[{name:'i',value:'5',status}]},
  {file:'/build/src/main.c',line:parent,function:'main',variables:[]}]});
 const short=runtime('bad.c');short.frames.pop();
+const legacy=runtime('bad.c');delete legacy.association;
+const shifted=runtime('bad.c');shifted.frames.shift();
 const wrongWidth=runtime('bad.c');wrongWidth.valgrind_error='Invalid write of size 40';
 const unverified=runtime('bad.c');unverified.association={status:'unverified'};
 const wrongFunction=runtime('bad.c');wrongFunction.frames[1].function='another_function';
 const caller=runtime('bad.c');caller.frames.unshift({file:'/build/src/actual-error.c',line:1,function:'actual_error'});
-window.aivCaptureUpdate({live:true,items:[{snapshot:short},{snapshot:wrongFunction},{snapshot:caller},{snapshot:wrongWidth},{snapshot:unverified}]});
+window.aivCaptureUpdate({live:true,items:[{snapshot:short},{snapshot:wrongFunction},{snapshot:caller},{snapshot:wrongWidth},{snapshot:unverified},{snapshot:legacy},{snapshot:shifted}]});
 assert(nodes['capture-status'].textContent.includes('已关联 0 个错误'));
 window.aivCaptureUpdate({live:false,items:[
  {snapshot:runtime('a.c')}, {snapshot:runtime('bad.c','available',99)},

@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v14
+// aiv-stack-captures-v15
 (()=>{
  let running=true,timer,activeReplay=null;const captures=new Map();
  const status=document.getElementById('capture-status');
@@ -15,22 +15,21 @@ SCRIPT = r'''
   return !!r.file&&paths(f).includes(normalize(r.file))&&Number(f.line)>0&&Number(f.line)===Number(r.line)&&(!f.fn||!r.function||fn(f.fn)===fn(r.function));
  }
  function match(e,snapshot){
-  if(snapshot.association&&snapshot.association.status!=='verified')return null;
+  if(snapshot.association?.status!=='verified')return null;
   const diagnostic=String(snapshot.valgrind_error||'').split('\n').map(line=>message(line.replace(/==\d+==\s*/g,'')));
   if(!e.what||!diagnostic.includes(message(e.what)))return null;
   const frames=e.stacks[0]?.frames||[],runtime=snapshot.frames||[];
   if(!frames.length||!runtime.length)return null;
   // Align source frames, ignoring unsymbolized wrappers. Never use the replay seed ID.
   const source=frames.slice(0,16).map((f,i)=>({f,i})).filter(x=>paths(x.f).length&&Number(x.f.line)>0);
-  const actual=runtime.filter(r=>r.file&&Number(r.line)>0);
-  if(!source.length||!actual.length)return null;
+  if(!source.length)return null;
   // Never match a caller further down the runtime stack, or accept a short
   // prefix when the recorded caller chain is unavailable.
-  if(actual.length<source.length)return null;
   const result=new Map();
   for(let j=0;j<source.length;j++){
-   if(!sameFrame(source[j].f,actual[j]))return null;
-   result.set('0:'+source[j].i,actual[j]);
+   const actual=runtime[source[j].i];
+   if(!actual||!sameFrame(source[j].f,actual))return null;
+   result.set('0:'+source[j].i,actual);
   }
   return result;
  }
@@ -87,7 +86,6 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    add('p','所属报告错误：'+e.id+' · 采集现场：'+(saved.captureId||'旧数据未提供现场文件名')).className='meta';
-   if(!saved.snapshot.association)add('p','旧现场未记录停止地址校验，仅按诊断和源码栈匹配；若怀疑错位，请重新执行步骤三采集。').className='notice';
    add('p','现场来源：'+(frame.function||'未知函数')+' · '+(frame.file||'未知文件')+':'+(frame.line||'?')+' · GDB 帧 #'+(frame.index??'?')).className='meta';
    add('p',saved.snapshot.captured_at||'本次运行').className='meta';
    const [si,fi]=node.dataset.frameKey.split(':').map(Number),recorded=e.stacks[si]?.frames[fi];
@@ -192,7 +190,7 @@ SCRIPT = r'''
   }
   for(const item of data.items){
    const snapshot=item.snapshot;if(!snapshot){unmatched++;missing++;continue}
-   if(snapshot.association&&snapshot.association.status!=='verified'){unmatched++;unverified++;continue}
+   if(snapshot.association?.status!=='verified'){unmatched++;unverified++;continue}
    const candidates=new Set();for(const r of snapshot.frames||[])for(const e of index.get(normalize(r.file)+':'+Number(r.line))||[])candidates.add(e);
    const matches=[];for(const e of candidates){const frames=match(e,snapshot);if(frames)matches.push({e,frames})}
    if(matches.length!==1){unmatched++;if(matches.length>1)ambiguous++;continue}
@@ -201,7 +199,7 @@ SCRIPT = r'''
   const current=report.errors.find(e=>e.id===selected);if(current)paint(current);
   if(changed&&filter.checked)list();else markNavigation();
   running=data.live;
-  status.textContent=(running?'采集中':'采集已结束')+' · 已关联 '+captures.size+' 个错误，其中 '+[...captures.keys()].filter(hasVariables).length+' 个已读出变量；'+unmatched+' 个现场未能唯一匹配（缺少现场数据 '+missing+'，停止位置未核实 '+unverified+'，多个候选 '+ambiguous+'，位置或错误描述不匹配 '+(unmatched-missing-ambiguous-unverified)+'）。原始现场保留在 captures 目录。';
+  status.textContent=(running?'采集中':'采集已结束')+' · 已关联 '+captures.size+' 个错误，其中 '+[...captures.keys()].filter(hasVariables).length+' 个已读出变量；'+unmatched+' 个现场未能唯一匹配（缺少现场数据 '+missing+'，停止位置未核实 '+unverified+'，多个候选 '+ambiguous+'，位置或错误描述不匹配 '+(unmatched-missing-ambiguous-unverified)+'）。原始现场保留在 captures 目录。'+(unverified?' 旧现场或未核实现场不会填入堆栈，请重新执行步骤三。':'');
  };
  function poll(){
   if(!running)return;

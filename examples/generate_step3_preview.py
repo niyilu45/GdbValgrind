@@ -19,6 +19,7 @@ def main():
                        [{'name':'p', 'value':'0x1000', 'initialization':{'state':'defined'}}] if index==0
                        else [{'name':'i', 'value':'0'}]})
     snapshot = {'captured_at':'示例现场（演示数据，非实机采集）',
+                'association':{'status':'verified','note':'Synthetic demo, not a live capture'},
                 'valgrind_error':error['what'], 'frames':frames,
                 'memory':{'explanation':'写入越过分配块末尾。',
                           'range_explanation':'内存块 4 字节，写入 4 字节；合法起始偏移 0，实际起始偏移 4，访问偏移 4～7。'}}

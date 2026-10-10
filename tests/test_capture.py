@@ -13,6 +13,21 @@ from inc import cli
 
 
 class CaptureTests(unittest.TestCase):
+    def test_inline_frame_does_not_collect_enclosing_function_locals(self):
+        class Block(list):
+            is_global=False
+            is_static=False
+            function=None
+            superblock=None
+        symbol=lambda name: SimpleNamespace(name=name,is_argument=False,is_variable=True)
+        enclosing=Block([symbol('html')]);enclosing.function=SimpleNamespace(name='caller')
+        function=Block([symbol('gone')]);function.function=SimpleNamespace(name='inline_function');function.superblock=enclosing
+        inner=Block([symbol('i')]);inner.superblock=function
+        self.frame.block=lambda:inner
+        values,note=self.scope['capture_variables'](self.frame)
+        self.assertEqual([row['name'] for row in values],['i','gone'])
+        self.assertNotIn('html',[row['name'] for row in values])
+
     def test_capture_records_pc_mismatch_as_unverified(self):
         self.frame.pc=lambda:0x999
         self.count=1

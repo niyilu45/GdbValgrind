@@ -369,6 +369,10 @@ def capture_variables(frame, budget=None):
                 result.append(row)
                 if len(result) >= 128:
                     return result, '每帧最多采集 128 个变量'
+            # An inline function's superblock can belong to its caller. The
+            # caller has its own frame; never label its locals as this frame's.
+            if getattr(block, 'function', None) is not None:
+                break
             block = block.superblock
         return result, '' if result else '没有可读的参数或局部变量；可能缺少调试符号'
     except Exception as exc:
