@@ -14,6 +14,9 @@ class ReportUITests(unittest.TestCase):
         from inc.workflow import save_combined_report, refresh_capture_report
         root=Path(__file__).resolve().parents[1]
         report=load_report(root/'examples/sample.xml',root)
+        for i,error in enumerate(report['errors']):
+            for fi,frame in enumerate(error['stacks'][0]['frames']):
+                frame['source']=[{'number':frame.get('line'), 'text':'use(owner_%d_%d);'%(i,fi)}]
         with tempfile.TemporaryDirectory() as directory:
             folder=Path(directory)
             base=render_html(report,source_base=None)
@@ -25,6 +28,7 @@ class ReportUITests(unittest.TestCase):
                 for fi,frame in enumerate(error['stacks'][0]['frames']):
                     frames.append({'file':frame.get('local_file') or frame.get('dir','')+'/'+frame.get('file',''),
                         'line':frame.get('line'), 'function':frame.get('fn'), 'index':fi,
+                        'source_line':{'text':'use(owner_%d_%d);'%(i,fi),'identifiers':'use(owner_%d_%d);'%(i,fi)},
                         'variables':[{'name':'owner_%d_%d'%(i,fi),'value':str(i*100+fi),'status':'available'}]})
                 snapshot={'valgrind_error':error['what'],'association':{'status':'verified'},'frames':frames}
                 (session/('error-%d.json'%i)).write_text(json.dumps(snapshot),encoding='utf-8')

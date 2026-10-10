@@ -62,9 +62,12 @@ def memory_facts(message):
     return facts
 
 def capture_identity(message):
-    # Match diagnostic paths, never variable values or process-specific addresses.
+    # Within one replay, distinct instruction sites must not suppress each
+    # other merely because debug line information is the same. Heap addresses
+    # remain irrelevant. Report grouping separately controls visible duplicates.
     result = re.sub(r'==\d+==\s*', '', message)
-    result = re.sub(r'0x[0-9a-fA-F]+', '<address>', result)
+    result = re.sub(r'(\b(?:at|by)\s+)?0x[0-9a-fA-F]+',
+                    lambda m: m.group() if m.group(1) else '<address>', result)
     result = re.sub(r'Thread\s+\d+', 'Thread <id>', result)
     result = re.sub(r'loss record \d+ of \d+', 'loss record <n>', result)
     return result.strip()
@@ -452,6 +455,7 @@ class AutoValueCapture:
                     row['file'] = sal.symtab.fullname() if sal.symtab else ''
                     row['line'] = sal.line
                     row['source_line'] = capture_source_line(row['file'], sal.line)
+                    row['line_checks'] = check_source_expressions(frame, row['source_line'], initialization_budget)
                     row['variables'], row['note'] = capture_variables(frame, initialization_budget)
                     row['index_analysis'] = nested_index_analysis(frame, row['source_line'])
                 except Exception as exc:
@@ -505,6 +509,8 @@ class AutoValueCapture:
                 lines.append('\n#%s %s %s:%s' % (row['index'], row.get('function', ''), row.get('file', ''), row.get('line', '')))
                 if row.get('source_line'):
                     lines.append('  源码：' + row['source_line']['text'])
+                for checked in row.get('line_checks', {}).get('items', []):
+                    lines.append('  本行逐项检查 %s = %s [%s]；%s' % (checked['name'], checked['value'], checked['status'], initialization_summary(checked['initialization'])))
                 if row.get('index_analysis', {}).get('levels'):
                     lines.append('  嵌套索引分析：' + json.dumps(row['index_analysis'], ensure_ascii=False))
                 for variable in row.get('variables', []):
@@ -518,7 +524,8 @@ class AutoValueCapture:
             base.with_suffix('.txt').write_text(readable, encoding='utf-8')
             base.with_suffix('.html').write_text('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AiValgrind 错误现场</title><body><h1>内存错误现场</h1><pre style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6">' + html.escape(readable) + '</pre></body></html>', encoding='utf-8')
             self.last_count = count
-            self.seen.add(identity)
+            if verified:
+                self.seen.add(identity)
             gdb.write('\n[AiValgrind] 已保存现场: ' + str(base.with_suffix('.html')) + '\n')
             gdb.write(snapshot['memory'].get('explanation', '') + '\n')
             gdb.write(snapshot['initialization_analysis']['note'] + '\n')
@@ -574,3 +581,5 @@ gdb.write('[AiValgrind] 自动变量采集已启用。\n')
 
 from .index_analysis import INDEX_ANALYSIS_SCRIPT
 GDB_CAPTURE_SCRIPT += INDEX_ANALYSIS_SCRIPT
+from .line_checks import LINE_CHECK_SCRIPT
+GDB_CAPTURE_SCRIPT += LINE_CHECK_SCRIPT

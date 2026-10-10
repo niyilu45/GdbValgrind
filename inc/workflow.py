@@ -232,7 +232,7 @@ def refresh_capture_report(directory, *, base_html=None, report=None):
     else:
         content = (directory / 'report.html').read_text(encoding='utf-8')
     viewer_versions = re.findall(r'// aiv-stack-captures-v\d+', content)
-    if viewer_versions == ['// aiv-stack-captures-v17']:
+    if viewer_versions == ['// aiv-stack-captures-v18']:
         return
     from .templates import SOURCE_VIEW_STYLE, STACK_SCROLL_FUNCTION, SELECT_ERROR_FUNCTION, FILTER_STATE_SCRIPT
     if 'id="report-data"' in content:

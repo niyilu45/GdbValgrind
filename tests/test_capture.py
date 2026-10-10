@@ -44,6 +44,42 @@ class CaptureTests(unittest.TestCase):
         data=json.loads((self.root/'error-0001.json').read_text(encoding='utf-8'))
         self.assertEqual(data['association']['status'],'verified')
 
+    def test_source_expression_checks_are_saved_in_the_capture(self):
+        from tests.test_line_checks import Value
+        source=self.root/'source.c'
+        source.write_text('return target.used;\n', encoding='utf-8')
+        self.frame.find_sal=lambda:SimpleNamespace(symtab=SimpleNamespace(fullname=lambda:str(source)),line=1)
+        target=Value({'used':Value(73), 'unrelated':Value(999)}, code=self.gdb.TYPE_CODE_STRUCT)
+        read=self.frame.read_var
+        self.frame.read_var=lambda symbol:target if symbol=='target' else read(symbol)
+        self.count=1
+        self.collector.on_stop(None)
+        data=json.loads((self.root/'error-0001.json').read_text(encoding='utf-8'))
+        checks=data['frames'][0]['line_checks']['items']
+        self.assertEqual([(v['name'],v['value']) for v in checks],[('target.used','73')])
+        self.assertNotIn('unrelated', str(checks))
+
+    def test_unverified_first_capture_does_not_suppress_verified_repeat(self):
+        self.frame.pc=lambda:0x999
+        self.count=1
+        self.collector.on_stop(None)
+        self.frame.pc=lambda:0x100
+        self.count=2
+        self.collector.on_stop(None)
+        data=json.loads((self.root/'error-0002.json').read_text(encoding='utf-8'))
+        self.assertEqual(data['association']['status'],'verified')
+
+    def test_distinct_instructions_on_same_source_line_are_captured_separately(self):
+        self.count=1
+        self.collector.on_stop(None)
+        self.error=self.error.replace('0x100','0x104')
+        self.frame.pc=lambda:0x104
+        self.count=2
+        self.collector.on_stop(None)
+        data=json.loads((self.root/'error-0002.json').read_text(encoding='utf-8'))
+        self.assertEqual(data['association']['status'],'verified')
+        self.assertEqual(data['association']['current_pc'],'0x104')
+
     def test_struct_member_values_are_bounded_and_do_not_follow_pointers(self):
         class Value:
             is_optimized_out = False
@@ -100,6 +136,7 @@ class CaptureTests(unittest.TestCase):
             superblock = None
 
         self.frame = SimpleNamespace(name=lambda: 'bad', find_sal=lambda: SimpleNamespace(symtab=SimpleNamespace(fullname=lambda: 'demo.c'), line=9),
+                                     pc=lambda:0x100,
                                      block=lambda: Block(symbols), read_var=lambda symbol: {'i': available, 'gone': optimized, 'html': markup}[symbol.name], older=lambda: None)
         self.gdb = SimpleNamespace(execute=self.execute, write=self.messages.append,
                                    TYPE_CODE_INT=1, TYPE_CODE_BOOL=2, TYPE_CODE_ENUM=3, TYPE_CODE_PTR=4,
@@ -138,7 +175,7 @@ class CaptureTests(unittest.TestCase):
         self.collector.on_stop(None)
         first = (self.root / 'error-0001.json').read_bytes()
         self.count = 2
-        self.error = self.error.replace('0x200', '0x900').replace('0x100', '0x700')
+        self.error = self.error.replace('0x200', '0x900')
         self.collector.on_stop(None)
         self.collector.on_stop(None)  # a later breakpoint with unchanged counter
         self.assertEqual(len(list(self.root.glob('*.json'))), 1)
