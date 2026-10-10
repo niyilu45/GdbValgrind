@@ -170,7 +170,7 @@ def refresh_capture_report(directory, *, base_html=None, report=None):
         content = core.render_html(report, source_base=None)
     else:
         content = (directory / 'report.html').read_text(encoding='utf-8')
-    if 'aiv-stack-captures-v6' in content:
+    if 'aiv-stack-captures-v9' in content:
         return
     content = re.sub(r'<section id="capture-results".*?</section>\s*(?:<script>.*?</script>)?', '', content, flags=re.S)
     content = content.replace('<a href="#capture-results">查看步骤三变量现场</a>', '')
