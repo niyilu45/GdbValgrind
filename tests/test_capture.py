@@ -13,6 +13,22 @@ from inc import cli
 
 
 class CaptureTests(unittest.TestCase):
+    def test_capture_records_pc_mismatch_as_unverified(self):
+        self.frame.pc=lambda:0x999
+        self.count=1
+        self.collector.on_stop(None)
+        data=json.loads((self.root/'error-0001.json').read_text(encoding='utf-8'))
+        self.assertEqual(data['association']['status'],'unverified')
+        self.assertEqual(data['association']['diagnostic_pc'],'0x100')
+        self.assertEqual(data['association']['current_pc'],'0x999')
+
+    def test_capture_verifies_current_pc(self):
+        self.frame.pc=lambda:0x100
+        self.count=1
+        self.collector.on_stop(None)
+        data=json.loads((self.root/'error-0001.json').read_text(encoding='utf-8'))
+        self.assertEqual(data['association']['status'],'verified')
+
     def test_struct_member_values_are_bounded_and_do_not_follow_pointers(self):
         class Value:
             is_optimized_out = False

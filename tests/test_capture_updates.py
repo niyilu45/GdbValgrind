@@ -86,9 +86,11 @@ const runtime=(file,status='available',parent=20)=>({valgrind_error:'==123== Inv
  {function:'wrapper'}, {file:'/build/src/./'+file,line:10,function:'foo',variables:[{name:'i',value:'5',status}]},
  {file:'/build/src/main.c',line:parent,function:'main',variables:[]}]});
 const short=runtime('bad.c');short.frames.pop();
+const wrongWidth=runtime('bad.c');wrongWidth.valgrind_error='Invalid write of size 40';
+const unverified=runtime('bad.c');unverified.association={status:'unverified'};
 const wrongFunction=runtime('bad.c');wrongFunction.frames[1].function='another_function';
 const caller=runtime('bad.c');caller.frames.unshift({file:'/build/src/actual-error.c',line:1,function:'actual_error'});
-window.aivCaptureUpdate({live:true,items:[{snapshot:short},{snapshot:wrongFunction},{snapshot:caller}]});
+window.aivCaptureUpdate({live:true,items:[{snapshot:short},{snapshot:wrongFunction},{snapshot:caller},{snapshot:wrongWidth},{snapshot:unverified}]});
 assert(nodes['capture-status'].textContent.includes('已关联 0 个错误'));
 window.aivCaptureUpdate({live:false,items:[
  {snapshot:runtime('a.c')}, {snapshot:runtime('bad.c','available',99)},
@@ -150,6 +152,10 @@ frame.children=[];detail(report.errors[1]);
 const changedPanel=frame.children[0],changedAll=changedPanel.children.find(n=>n.dataset?.captureAllVariables==='yes');
 assert(changedPanel.textContent.includes('源码行不同'));
 assert(!changedPanel.children.filter(n=>n!==changedAll).map(n=>n.textContent).join('').includes('request.length = 99'));
+window.aivCaptureUpdate({live:true,report_key:'different-report',items:[{snapshot:struct}]});
+assert(nodes['capture-status'].textContent.includes('另一份步骤二报告'));
+window.aivCaptureUpdate({live:false,replay_id:'new-replay',items:[]});
+assert(nodes['capture-status'].textContent.includes('已关联 0 个错误'));
 '''
         script = SCRIPT.replace('<script>', '').replace('</script>', '')
         result = subprocess.run(['node', '-e', setup+script+checks], capture_output=True, text=True, encoding='utf-8')

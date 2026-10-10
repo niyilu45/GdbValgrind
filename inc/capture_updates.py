@@ -2,9 +2,9 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v13
+// aiv-stack-captures-v14
 (()=>{
- let running=true,timer;const captures=new Map();
+ let running=true,timer,activeReplay=null;const captures=new Map();
  const status=document.getElementById('capture-status');
  const normalize=s=>{const parts=[];for(const p of String(s||'').replace(/\\/g,'/').split('/')){if(p==='.')continue;if(p==='..'&&parts.length&&parts[parts.length-1]!=='..')parts.pop();else parts.push(p)}return parts.join('/')};
  const paths=f=>[f.local_file,f.file&&(/^(\/|[A-Za-z]:)/.test(f.file)?f.file:(f.dir?f.dir+'/':'')+f.file)].filter(Boolean).map(normalize);
@@ -15,7 +15,9 @@ SCRIPT = r'''
   return !!r.file&&paths(f).includes(normalize(r.file))&&Number(f.line)>0&&Number(f.line)===Number(r.line)&&(!f.fn||!r.function||fn(f.fn)===fn(r.function));
  }
  function match(e,snapshot){
-  if(!snapshot.valgrind_error||!message(snapshot.valgrind_error).includes(message(e.what))||!e.what)return null;
+  if(snapshot.association&&snapshot.association.status!=='verified')return null;
+  const diagnostic=String(snapshot.valgrind_error||'').split('\n').map(line=>message(line.replace(/==\d+==\s*/g,'')));
+  if(!e.what||!diagnostic.includes(message(e.what)))return null;
   const frames=e.stacks[0]?.frames||[],runtime=snapshot.frames||[];
   if(!frames.length||!runtime.length)return null;
   // Align source frames, ignoring unsymbolized wrappers. Never use the replay seed ID.
@@ -85,6 +87,7 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    add('p','所属报告错误：'+e.id+' · 采集现场：'+(saved.captureId||'旧数据未提供现场文件名')).className='meta';
+   if(!saved.snapshot.association)add('p','旧现场未记录停止地址校验，仅按诊断和源码栈匹配；若怀疑错位，请重新执行步骤三采集。').className='notice';
    add('p','现场来源：'+(frame.function||'未知函数')+' · '+(frame.file||'未知文件')+':'+(frame.line||'?')+' · GDB 帧 #'+(frame.index??'?')).className='meta';
    add('p',saved.snapshot.captured_at||'本次运行').className='meta';
    const [si,fi]=node.dataset.frameKey.split(':').map(Number),recorded=e.stacks[si]?.frames[fi];
@@ -178,9 +181,18 @@ SCRIPT = r'''
  }
  const originalList=list;list=function(...args){originalList(...args);markNavigation()};
  window.aivCaptureUpdate=data=>{
-  let unmatched=0,missing=0,ambiguous=0,changed=false;
+  if(data.report_key&&data.report_key!=='__CAPTURE_REPORT_KEY__'){
+   running=false;status.textContent='变量数据属于另一份步骤二报告，已停止关联。请重新打开本次生成的 full-report.html。';return;
+  }
+  let unmatched=0,missing=0,ambiguous=0,unverified=0,changed=false;
+  if(data.replay_id&&data.replay_id!==activeReplay){
+   activeReplay=data.replay_id;captures.clear();changed=true;
+   for(const frame of document.getElementById('detail').children)for(const child of [...frame.children])if(child.dataset?.captureVariables==='yes')child.remove();
+   for(const node of document.getElementById('list').children)for(const child of [...node.children])if(child.dataset?.captureBadge==='yes')child.remove();
+  }
   for(const item of data.items){
    const snapshot=item.snapshot;if(!snapshot){unmatched++;missing++;continue}
+   if(snapshot.association&&snapshot.association.status!=='verified'){unmatched++;unverified++;continue}
    const candidates=new Set();for(const r of snapshot.frames||[])for(const e of index.get(normalize(r.file)+':'+Number(r.line))||[])candidates.add(e);
    const matches=[];for(const e of candidates){const frames=match(e,snapshot);if(frames)matches.push({e,frames})}
    if(matches.length!==1){unmatched++;if(matches.length>1)ambiguous++;continue}
@@ -189,7 +201,7 @@ SCRIPT = r'''
   const current=report.errors.find(e=>e.id===selected);if(current)paint(current);
   if(changed&&filter.checked)list();else markNavigation();
   running=data.live;
-  status.textContent=(running?'采集中':'采集已结束')+' · 已关联 '+captures.size+' 个错误，其中 '+[...captures.keys()].filter(hasVariables).length+' 个已读出变量；'+unmatched+' 个现场未能唯一匹配（缺少现场数据 '+missing+'，多个候选 '+ambiguous+'，位置或错误描述不匹配 '+(unmatched-missing-ambiguous)+'）。原始现场保留在 captures 目录。';
+  status.textContent=(running?'采集中':'采集已结束')+' · 已关联 '+captures.size+' 个错误，其中 '+[...captures.keys()].filter(hasVariables).length+' 个已读出变量；'+unmatched+' 个现场未能唯一匹配（缺少现场数据 '+missing+'，停止位置未核实 '+unverified+'，多个候选 '+ambiguous+'，位置或错误描述不匹配 '+(unmatched-missing-ambiguous-unverified)+'）。原始现场保留在 captures 目录。';
  };
  function poll(){
   if(!running)return;

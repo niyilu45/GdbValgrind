@@ -393,8 +393,7 @@ class AutoValueCapture:
         self.resume_allowed = False
         self.stop_reason = getattr(event, 'stop_signal', '') or '非内存错误断点或未知停止原因'
         # Do not resume user breakpoints, interrupts or real target signals.
-        if _capture_config.get('auto_continue') and (getattr(event, 'breakpoints', ()) or
-                getattr(event, 'stop_signal', None) not in (None, 'SIGTRAP')):
+        if getattr(event, 'breakpoints', ()) or getattr(event, 'stop_signal', None) not in (None, 'SIGTRAP'):
             return
         self.active = True
         try:
@@ -437,6 +436,10 @@ class AutoValueCapture:
                 row = {'index': index}
                 try:
                     row['function'] = frame.name() or '<unknown>'
+                    try:
+                        row['pc'] = hex(int(frame.pc()))
+                    except Exception:
+                        pass
                     sal = frame.find_sal()
                     row['file'] = sal.symtab.fullname() if sal.symtab else ''
                     row['line'] = sal.line
@@ -455,6 +458,14 @@ class AutoValueCapture:
                         raise CaptureDisconnected(str(exc))
                     snapshot['unwind_error'] = str(exc)
                     break
+            diagnostic_pc = re.search(r'\bat\s+(0x[0-9a-fA-F]+):', message)
+            current_pc = snapshot['frames'][0].get('pc') if snapshot['frames'] else None
+            verified = bool(diagnostic_pc and current_pc and int(diagnostic_pc.group(1), 16) == int(current_pc, 16)
+                            and snapshot['errors_since_previous_capture'] == 1)
+            snapshot['association'] = {'status': 'verified' if verified else 'unverified',
+                'diagnostic_pc': diagnostic_pc.group(1) if diagnostic_pc else None, 'current_pc': current_pc,
+                'note': '已核对当前 PC 与 Valgrind 主错误栈顶地址及单次错误计数' if verified else
+                        '无法确认最近错误与当前停止现场一致；保留原始数据，不自动填入报告堆栈'}
             snapshot['initialization_analysis'] = analyze_initialization_use(snapshot)
             self.sequence += 1
             folder = Path(_capture_config['directory'])

@@ -6,6 +6,8 @@ import sys
 import threading
 import json
 import re
+import hashlib
+import uuid
 from .capture_updates import SCRIPT as CAPTURE_UPDATES
 
 from . import core
@@ -42,6 +44,13 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
             report = core.load_report(source,progress=progress)
     command = list(command)
     if report:
+        if step3_only:
+            base_data = report_payload(base_html)
+            if base_data is not None:
+                expected = {(e['id'], e['kind']) for e in report['errors']}
+                actual = {(e['id'], e['kind']) for e in base_data.get('errors', [])}
+                if expected != actual:
+                    raise ValueError('步骤二 HTML 与 --xml 的错误列表不一致，未启动步骤三。请提供同一次检测生成的 XML 和 HTML。')
         metadata = report['debug_command']
         if not command:
             command = metadata['target_args']
@@ -105,6 +114,7 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
     base_html = base_html or (directory / 'report.html').read_text(encoding='utf-8')
     prepare_capture_output(directory)
     previous = set((directory / 'captures').glob('session-*/error-*.txt'))
+    replay_id = uuid.uuid4().hex
     stop = threading.Event()
     last_snapshot = None
     def update(live):
@@ -113,7 +123,7 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
                          for p in sorted((directory / 'captures').glob('session-*/error-*.txt')) if p not in previous)
         if live and snapshot == last_snapshot:
             return
-        save_combined_report(report, directory, base_html=base_html, previous=previous, live=live)
+        save_combined_report(report, directory, base_html=base_html, previous=previous, live=live, replay_id=replay_id)
         last_snapshot = snapshot
     def refresh():
         while not stop.wait(2):
@@ -136,7 +146,19 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
         print('合并报告：' + str(directory / 'full-report.html'), flush=True)
 
 
-def save_combined_report(report, directory, *, base_html=None, previous=(), live=False):
+def report_payload(content):
+    match = re.search(r'<script id="report-data" type="application/json">(.*?)</script>', content or '', re.S)
+    return json.loads(match.group(1)) if match else None
+
+
+def report_key(content):
+    payload = report_payload(content)
+    # Only report data determines identity, not the viewer script or its version.
+    text = json.dumps(payload, sort_keys=True, ensure_ascii=True) if payload is not None else content
+    return hashlib.sha256((text or '').encode('utf-8')).hexdigest()
+
+
+def save_combined_report(report, directory, *, base_html=None, previous=(), live=False, replay_id=None):
     """Update the sidecar only; initialize the report viewer once."""
     items = []
     for path in sorted((directory / 'captures').glob('session-*/error-*.txt')):
@@ -151,7 +173,8 @@ def save_combined_report(report, directory, *, base_html=None, previous=(), live
             pass
         items.append(item)
     update_file = directory / 'capture-updates.js.tmp'
-    update_file.write_text('window.aivCaptureUpdate(' + json.dumps({'live':live,'items':items},ensure_ascii=True).replace('<','\\u003c') + ');', encoding='utf-8')
+    key = report_key(base_html) if base_html else None
+    update_file.write_text('window.aivCaptureUpdate(' + json.dumps({'live':live,'items':items,'report_key':key,'replay_id':replay_id},ensure_ascii=True).replace('<','\\u003c') + ');', encoding='utf-8')
     update_file.replace(directory / 'capture-updates.js')
     refresh_capture_report(directory, base_html=base_html, report=report)
 
@@ -162,7 +185,10 @@ def refresh_capture_report(directory, *, base_html=None, report=None):
     if not (directory / 'capture-updates.js').is_file():
         raise ValueError('缺少步骤三变量文件 capture-updates.js：' + str(directory))
     output = directory / 'full-report.html'
-    if output.exists():
+    replacing_base = bool(base_html and output.exists() and report_key(output.read_text(encoding='utf-8')) != report_key(base_html))
+    if replacing_base:
+        content = base_html
+    elif output.exists():
         content = output.read_text(encoding='utf-8')
     elif base_html:
         content = base_html
@@ -170,7 +196,7 @@ def refresh_capture_report(directory, *, base_html=None, report=None):
         content = core.render_html(report, source_base=None)
     else:
         content = (directory / 'report.html').read_text(encoding='utf-8')
-    if 'aiv-stack-captures-v13' in content:
+    if 'aiv-stack-captures-v14' in content:
         return
     from .templates import SOURCE_VIEW_STYLE, STACK_SCROLL_FUNCTION, SELECT_ERROR_FUNCTION, FILTER_STATE_SCRIPT
     if 'id="report-data"' in content:
@@ -188,7 +214,8 @@ def refresh_capture_report(directory, *, base_html=None, report=None):
         content = content.replace('</head>', '<style>' + SOURCE_VIEW_STYLE + '</style></head>', 1)
     content = re.sub(r'<section id="capture-results".*?</section>\s*(?:<script>.*?</script>)?', '', content, flags=re.S)
     content = content.replace('<a href="#capture-results">查看步骤三变量现场</a>', '')
-    appendix = '<section id="capture-results" style="padding:24px"><h2>步骤三变量状态</h2><p>变量显示在对应错误的主调用栈帧下方。</p><p id="capture-status">正在读取变量数据…</p></section>' + CAPTURE_UPDATES
+    viewer = CAPTURE_UPDATES.replace('__CAPTURE_REPORT_KEY__', report_key(content))
+    appendix = '<section id="capture-results" style="padding:24px"><h2>步骤三变量状态</h2><p>变量显示在对应错误的主调用栈帧下方。</p><p id="capture-status">正在读取变量数据…</p></section>' + viewer
     content = content.replace('</body>', appendix + '</body>')
     content = content.replace('<body>', '<body><a href="#capture-results">查看步骤三变量现场</a>', 1)
     temporary = directory / 'full-report.html.tmp'

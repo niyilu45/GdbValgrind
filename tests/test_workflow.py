@@ -9,6 +9,34 @@ from tests.test_aivalgrind import error
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_step_three_rejects_unrelated_html_before_launch(self):
+        xml=Path(__file__).resolve().parents[1]/'examples/sample.xml'
+        with tempfile.TemporaryDirectory() as root:
+            base=Path(root)/'report.html'
+            base.write_text('<script id="report-data" type="application/json">{"errors":[]}</script>',encoding='utf-8')
+            with patch.object(workflow.core,'check_debug_environment') as probe:
+                with self.assertRaisesRegex(ValueError,'不一致'):
+                    workflow.analyze_run(['app'],root,xml_path=xml,step3_only=True,base_report=base)
+                probe.assert_not_called()
+
+    def test_new_step_two_report_replaces_old_combined_report(self):
+        import json
+        def html(identity):
+            return '<html><head></head><body><script id="report-data" type="application/json">'+json.dumps({'errors':[{'id':identity,'kind':'InvalidRead'}]})+'</script></body></html>'
+        with tempfile.TemporaryDirectory() as root:
+            directory=Path(root)
+            workflow.save_combined_report({},directory,base_html=html('old'),replay_id='first')
+            workflow.save_combined_report({},directory,base_html=html('new'),replay_id='second')
+            result=(directory/'full-report.html').read_text(encoding='utf-8')
+            self.assertEqual(workflow.report_payload(result)['errors'][0]['id'],'new')
+            self.assertIn(workflow.report_key(html('new')),result)
+            sidecar=(directory/'capture-updates.js').read_text(encoding='utf-8')
+            self.assertIn(workflow.report_key(html('new')),sidecar)
+            self.assertIn('second',sidecar)
+            before=(directory/'full-report.html').stat().st_mtime_ns
+            workflow.save_combined_report({},directory,base_html=html('new'),replay_id='second')
+            self.assertEqual((directory/'full-report.html').stat().st_mtime_ns,before)
+
     def test_older_workflow_does_not_break_cli_import(self):
         import importlib
         import io
@@ -41,7 +69,7 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual(main(['refresh-captures', '--output-dir', root]), 0)
                 debug.assert_not_called()
             html = (directory/'full-report.html').read_text(encoding='utf-8')
-            self.assertIn('aiv-stack-captures-v13', html)
+            self.assertIn('aiv-stack-captures-v14', html)
             self.assertNotIn('aiv-stack-captures-v4', html)
             self.assertIn('<p>source</p>', html)
             self.assertEqual(html.count('id="capture-results"'), 1)
