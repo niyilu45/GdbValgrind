@@ -38,7 +38,7 @@ let indexed=[],kindCounts=new Map();
 function errorAuthor(e){const frame=e.stacks[0]?.frames[0];const author=frame?.source?.find(row=>row.number===Number(frame.line))?.blame?.author;return author?'author:'+author:'missing'}
 function authorOptions(){
  const select=$('authorFilter'),previous=select.value,counts=new Map();
- for(const row of indexed)counts.set(row.author,(counts.get(row.author)||0)+(row.e.kind==='Leak_StillReachable'?0:1));
+ for(const row of matchingRows(true))counts.set(row.author,(counts.get(row.author)||0)+(row.e.kind==='Leak_StillReachable'?0:1));
  const name=author=>author==='missing'?'\u65e0\u4f5c\u8005\u4fe1\u606f':author.slice(7);
  if(previous&&!counts.has(previous))counts.set(previous,0);
  const authors=[...counts.keys()].sort((a,b)=>counts.get(b)-counts.get(a)||name(a).localeCompare(name(b),'zh-CN'));
@@ -51,7 +51,7 @@ function indexReport(){indexed=report.errors.map((e,index)=>{const frames=e.stac
 indexReport();
 let filtered=[];
 function selectError(e){selected=e.id;for(const b of $('list').children)if(b.dataset.errorId)b.setAttribute('aria-current',String(b.dataset.errorId===selected));detail(e);try{history.replaceState(null,'','#'+e.id)}catch{}if(innerWidth<1100)$('detail').scrollIntoView({behavior:'auto'})}
-function matchingRows(){const query=normalize($('search').value.trim()),file=normalize($('fileFilter').value.trim());return indexed.filter(row=>(!$('authorFilter').value||row.author===$('authorFilter').value)&&row.text.includes(query)&&(!file||row.files.some(path=>path.includes(file))))}
+function matchingRows(ignoreAuthor=false){const query=normalize($('search').value.trim()),file=normalize($('fileFilter').value.trim());return indexed.filter(row=>(ignoreAuthor||!$('authorFilter').value||row.author===$('authorFilter').value)&&row.text.includes(query)&&(!file||row.files.some(path=>path.includes(file))))}
 function nav(){
  const totals=new Map();for(const e of report.errors)totals.set(e.kind,(totals.get(e.kind)||0)+1);const matching=matchingRows();kindCounts=new Map();for(const row of matching)kindCounts.set(row.e.kind,(kindCounts.get(row.e.kind)||0)+1);
  $('nav').replaceChildren();
@@ -63,7 +63,7 @@ function openSourceFile(frame){
  window.open(file.url+'#L'+Number(frame.line),'_blank','noopener,noreferrer');
 }
 function list(reset=true){
- if(reset){visibleLimit=100;filtered=matchingRows().filter(row=>!kind||row.e.kind===kind);nav();}
+ if(reset){authorOptions();visibleLimit=100;filtered=matchingRows().filter(row=>!kind||row.e.kind===kind);nav();}
  const errors=filtered.map(row=>row.e);
  $('listCount').textContent='共 '+report.errors.length+' 个错误位置 · 筛选后 '+errors.length+' 个 · 已显示 '+Math.min(visibleLimit,errors.length)+' 个 · '+countPrefix+errors.reduce((n,e)=>n+e.count,0)+' 次记录';$('list').replaceChildren();
  for(const {e,index} of filtered.slice(0,visibleLimit)){const b=el('button',undefined,'issue');b.dataset.errorId=e.id;b.setAttribute('aria-current',String(e.id===selected));const t=el('span',undefined,'type');t.append(el('span','第 '+(index+1)+' 条 · '+e.kind),el('span','× '+countPrefix+e.count));b.append(t,el('strong',e.what));const frames=e.stacks[0]?.frames||[];const f=frames.find(f=>f.local_file)||frames.find(f=>f.file)||frames[0];b.append(el('small',f?position(f):'无调用栈'));b.onclick=()=>selectError(e);$('list').append(b)}

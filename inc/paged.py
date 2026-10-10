@@ -40,6 +40,8 @@ class PagedHandler(Handler):
                         if query:
                             clauses.append('instr('+column+',?)>0')
                             params.append(query.replace('\\','/').lower())
+                    author_where = ' AND '.join(clauses) or '1'
+                    author_params = list(params)
                     if value('author'):
                         clauses.append('author=?')
                         params.append('' if value('author') == 'missing' else value('author')[7:])
@@ -55,6 +57,9 @@ class PagedHandler(Handler):
                             kinds[k] = kinds.get(k,0)+n
                     if value('q') or value('file'):
                         kinds = {r['kind']:r['n'] for r in db.execute('SELECT kind,count(*) n FROM issues WHERE '+base+' GROUP BY kind',params)}
+                        author_counts = {r['author']:r['n'] for r in db.execute(
+                            "SELECT author,sum(CASE WHEN kind='Leak_StillReachable' THEN 0 ELSE 1 END) n FROM issues WHERE "
+                            +author_where+' GROUP BY author', author_params)}
                     if value('kind'):
                         clauses.append('kind=?'); params.append(value('kind'))
                     where = ' AND '.join(clauses) or '1'

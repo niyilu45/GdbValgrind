@@ -127,6 +127,14 @@ class PagedTests(unittest.TestCase):
                 self.assertEqual(data['errors'][0]['seq'],101)
                 self.assertNotIn('stacks',data['errors'][0])
                 self.assertEqual(get('/api/issues?file=missing.c')['total'],0)
+                self.assertEqual(get('/api/issues?file=missing.c')['authors'],[])
+                with connect(store.path) as db:
+                    db.execute("UPDATE issues SET author='Alice',files='selected.c' WHERE seq<=2")
+                    db.execute("UPDATE issues SET author='Bob',files='selected.c' WHERE seq=3")
+                    db.execute("UPDATE issues SET kind='Leak_StillReachable' WHERE seq=2")
+                    db.commit()
+                self.assertEqual(get('/api/issues?file=selected.c&author=author%3AAlice')['authors'],
+                                 [{'author':'Alice','n':1},{'author':'Bob','n':1}])
                 store.accept(ET.fromstring(error('new',kind='InvalidRead')));store.commit()
                 self.assertEqual(get('/api/issues?kind=InvalidRead')['total'],1)
                 detail=get('/api/issue?id='+data['errors'][0]['id'])
