@@ -659,14 +659,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def reply(self, status, body, content_type="application/json; charset=utf-8"):
         data = body.encode("utf-8") if isinstance(body, str) else json.dumps(body, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError):
+            # Refreshing/filtering aborts in-flight browser requests normally.
+            # Never attempt another error response on the disconnected socket.
+            self.close_connection = True
 
     def valid_host(self):
         return self.headers.get("Host") == "127.0.0.1:" + str(self.server.server_port)
