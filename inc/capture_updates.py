@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v18
+// aiv-stack-captures-v19
 (()=>{
  let running=true,timer,activeReplay=null;const captures=new Map();
  const status=document.getElementById('capture-status');
@@ -49,6 +49,7 @@ SCRIPT = r'''
   const info=v.initialization||{},details=v.member_details;
   const lines=[];const overall=variableState(info.observed_status||info.status,v.status,info.complete);
   lines.push({text:'\n'+v.name+(v.type?'（'+v.type+'）':'')+' · '+(v.role==='argument'?'函数参数':v.role==='source_expression'?'本行表达式逐项读取':'局部变量'),state:overall});
+  if(v.macro_expansion)lines.push('当前源码位置的宏展开：'+v.macro_expansion);
   if(v.status&&v.status!=='available'){lines.push({text:'无法读取：'+v.value,state:'uncertain'});return lines}
   lines.push({text:'检查结果：'+(initLabels[info.status]||'未提供初始化检查结果'),state:overall});
   if(info.reason)lines.push('检查范围说明：'+info.reason);
@@ -86,7 +87,7 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v18 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'旧现场：没有本行逐项检查记录；以下仅是旧值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v19 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'旧现场：没有本行逐项检查记录；以下仅是旧值的源码匹配，不代表已逐项检查')).className='meta';
    add('p','所属报告错误：'+e.id+' · 采集现场：'+(saved.captureId||'旧数据未提供现场文件名')).className='meta';
    if(e.records>1)add('p','本项合并了 '+e.records+' 条原始错误记录；以下仅来自上面标明的一次现场，不合并不同现场的变量值。').className='meta';
    add('p','现场来源：'+(frame.function||'未知函数')+' · '+(frame.file||'未知文件')+':'+(frame.line||'?')+' · GDB 帧 #'+(frame.index??'?')).className='meta';

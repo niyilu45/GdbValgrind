@@ -85,3 +85,51 @@ class LineCheckTests(unittest.TestCase):
         self.assertEqual([(r['name'], r['value']) for r in rows], [('object.inner.field', '3')])
         rows = self.run_line(' + '.join('v%d' % i for i in range(100)), {})
         self.assertEqual(len(rows), 32)
+
+    def test_lookup_uses_exact_frame_block_for_pointer_and_scoped_enum(self):
+        block = object()
+        pointer = Value(Value({'abc': Value(17)}, code=6), code=5)
+        enum = Value(5, code=3)
+        frame = SimpleNamespace(block=lambda:block, read_var=lambda name: self.fail('string lookup should not be used'))
+        def lookup(name, actual_block):
+            self.assertIs(actual_block, block)
+            value = {'rxvec':pointer, 'Mode::Ready':enum}[name]
+            def resolve(actual_frame):
+                self.assertIs(actual_frame, frame)
+                return value
+            return SimpleNamespace(is_variable=name=='rxvec', is_constant=name!='rxvec', value=resolve), False
+        self.scope['gdb'].lookup_symbol=lookup
+        rows=self.scope['check_source_expressions'](frame, {'identifiers':'use(rxvec->abc, Mode::Ready);'}, {})['items']
+        self.assertEqual([(r['name'],r['value']) for r in rows],[('rxvec->abc','17'),('Mode::Ready','5')])
+        self.assertEqual(rows[1]['initialization']['status'],'defined')
+        self.assertNotIn(enum,self.checked)
+
+    def test_implicit_this_member_resolves_pointer(self):
+        pointer=Value(Value({'abc':Value(19)},code=6),code=5)
+        owner=Value(Value({'rxvec':pointer},code=6),code=5)
+        frame=SimpleNamespace(block=lambda:object(),read_var=lambda name:owner if name=='this' else None)
+        self.scope['gdb'].lookup_symbol=lambda name,block:(None,True)
+        rows=self.scope['check_source_expressions'](frame,{'identifiers':'return rxvec->abc;'}, {})['items']
+        self.assertEqual(rows[0]['value'],'19')
+
+    def test_macro_expansion_uses_frame_and_restores_selection_even_on_failure(self):
+        selected=['original']
+        previous=SimpleNamespace(select=lambda:selected.__setitem__(0,'original'))
+        frame=SimpleNamespace(select=lambda:selected.__setitem__(0,'target'),read_var=lambda name: (_ for _ in ()).throw(ValueError(name)))
+        self.scope['gdb'].selected_frame=lambda:previous
+        def execute(command,**kwargs):
+            self.assertEqual(selected[0],'target')
+            return 'expands to: '+{'macro expand LIMIT':'(1U << 4) | 3UL',
+                                  'macro expand UNSAFE':'invoke_target()'}[command]
+        self.scope['gdb'].execute=execute
+        rows=self.scope['check_source_expressions'](frame,{'identifiers':'use(LIMIT, UNSAFE);'}, {})['items']
+        self.assertEqual(rows[0]['value'],'19')
+        self.assertEqual(rows[0]['macro_expansion'],'(1U << 4) | 3UL')
+        self.assertEqual(rows[1]['status'],'unavailable')
+        self.assertIn('不执行函数调用',rows[1]['value'])
+        self.assertEqual(selected[0],'original')
+
+    def test_macro_without_debug_info_explains_missing_value(self):
+        rows=self.run_line('return MISSING_MACRO;',{})
+        self.assertEqual(rows[0]['status'],'unavailable')
+        self.assertIn('-g3',rows[0]['value'])
