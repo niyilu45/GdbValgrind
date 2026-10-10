@@ -5,10 +5,23 @@ import subprocess
 import sys
 
 
+def version_requirements(feature, debug_enabled=False):
+    rows = ['Python 要求: 3.9 及以上']
+    if feature in ('collect', 'analyze', 'debug', 'auto-values') or debug_enabled:
+        rows.append('Valgrind 启动参数最低版本: 3.9.0（3.8.x 不兼容）')
+    if feature in ('analyze', 'debug', 'auto-values') or debug_enabled:
+        rows.append('GDB 适配目标版本: 10.1 / 10.2 / 13.1 / 15.2')
+        rows.append('自动变量采集另需 GDB 内置 Python；版本号不代表已验证组合')
+    return rows
+
+
 def print_tool_versions(feature, debug_enabled=False):
-    info = {'feature': feature, 'tools': ['Python ' + platform.python_version()]}
+    info = {'feature': feature, 'tools': ['Python ' + platform.python_version()],
+            'requirements': version_requirements(feature, debug_enabled)}
     print('[运行环境] 功能: ' + feature, flush=True)
     print('  Python: %s | %s' % (platform.python_version(), sys.executable), flush=True)
+    for row in info['requirements']:
+        print('  ' + row, flush=True)
     names = []
     if feature in ('collect', 'analyze', 'debug', 'auto-values') or debug_enabled:
         names.append('valgrind')

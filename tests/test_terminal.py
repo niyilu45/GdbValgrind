@@ -35,6 +35,9 @@ class TerminalTests(unittest.TestCase):
         output = screen.getvalue()
         self.assertEqual(output.count('valgrind-3.8.0'), 2)
         self.assertIn('第 1/3 步', output)
+        self.assertIn('Valgrind 启动参数最低版本: 3.9.0', output)
+        self.assertIn('GDB 适配目标版本: 10.1 / 10.2 / 13.1 / 15.2', output)
+        self.assertIn('当前版本: gdb: 10.2', output)
         self.assertIn('累计 4.0 秒', output)
         self.assertIn('已运行: 00:00:05', output)
 

@@ -9,6 +9,7 @@ import time
 import unicodedata
 import select
 import threading
+from .versions import version_requirements
 
 
 def clip(text, width):
@@ -163,8 +164,9 @@ class TerminalProgress:
             feature = self.runtime_info['feature']
             task = '自动分析 analyze · 第 1/3 步：内存检测' if feature == 'analyze' else '内存检测 collect'
             rows.insert(1, '当前任务: ' + task)
-            rows[2:2] = ['工具: ' + tool for tool in self.runtime_info['tools']]
-            rows.insert(2 + len(self.runtime_info['tools']), '要求: Python 3.9+；Valgrind 支持 --show-leak-kinds' + ('；GDB 含 Python' if feature == 'analyze' else ''))
+            rows[2:2] = ['当前版本: ' + tool for tool in self.runtime_info['tools']]
+            offset = 2 + len(self.runtime_info['tools'])
+            rows[offset:offset] = self.runtime_info.get('requirements', version_requirements(feature))
         kinds = sorted(summary['kinds'].items())
         # Reserve the footer and several program-output rows. Rotate overflowing
         # types instead of silently clipping them off the right edge or bottom.
