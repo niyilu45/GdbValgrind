@@ -30,7 +30,7 @@ const snapshot={requested_error_id:'wrong',valgrind_error:'Invalid write of size
 const checkbox=status.previous.children[0];checkbox.checked=true;assert.strictEqual(matchingRows().length,0);
 window.aivCaptureUpdate({live:true,items:[{id:'capture',snapshot}]});
 assert.strictEqual(matchingRows().length,1);
-const panel=frame.children[0];assert(panel.textContent.includes('x = 42'));
+const panel=frame.children[0];assert(panel.textContent.includes('实际值：42'));
 assert.strictEqual(frame.open,true);
 assert(issue.children[0].textContent.includes('已有变量'));assert.strictEqual(navigation.children[1].children[0].textContent,'变量 1');
 filtered=false;nav();assert.strictEqual(navigation.children[1].children[0].hidden,true);filtered=true;list();assert.strictEqual(navigation.children[1].children[0].textContent,'变量 1');
@@ -73,13 +73,25 @@ const runtime=(file,status='available',parent=20)=>({valgrind_error:'==123== Inv
 window.aivCaptureUpdate({live:false,items:[
  {snapshot:runtime('a.c')}, {snapshot:runtime('bad.c','available',99)},
  {snapshot:runtime('same.c')}, {snapshot:runtime('opt.c','optimized_out')}]});
-assert(frame.children[0].textContent.includes('i = 5'));
+assert(frame.children[0].textContent.includes('实际值：5'));
 const checkbox=nodes.resetFilters.previous.children[0];checkbox.checked=true;
 assert.deepStrictEqual(matchingRows().map(row=>row.e.id),['one']);
 assert(nodes['capture-status'].textContent.includes('已关联 2 个错误'));
 assert(nodes['capture-status'].textContent.includes('多个候选 1'));
 nodes.resetFilters.onclick();assert.strictEqual(checkbox.checked,false);
 assert.strictEqual(matchingRows().length,5);
+report.errors.push(error('structure','struct.c'));
+// Reuse a previously unmatched error so its saved data can be inspected.
+const struct=runtime('bad.c');struct.frames[1].variables=[{name:'request',type:'Request',status:'available',value:'raw struct',
+ initialization:{status:'partially_undefined',raw_vbits:'ff',member_states:[]},
+ member_details:{members:[{name:'length',type:'int',status:'available',value:'99',initialization:'undefined'},
+ {name:'buffer',type:'char *',status:'available',value:'0x1234',initialization:'defined',note:'未读取指向的内容'}]}}];
+selected='bad';window.aivCaptureUpdate({live:false,items:[{snapshot:struct}]});
+const text=frame.children[0].textContent;
+assert(text.includes('request.length（int） = 99'));
+assert(text.includes('未初始化，显示值不可靠'));
+assert(text.includes('未读取指向的内容'));
+assert(!text.includes('raw_vbits'));
 '''
         script = SCRIPT.replace('<script>', '').replace('</script>', '')
         result = subprocess.run(['node', '-e', setup+script+checks], capture_output=True, text=True)

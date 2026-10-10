@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v5
+// aiv-stack-captures-v6
 (()=>{
  let running=true,timer;const captures=new Map();
  const status=document.getElementById('capture-status');
@@ -33,6 +33,29 @@ SCRIPT = r'''
   }
   return alignments.length===1?alignments[0]:null;
  }
+ const initLabels={defined:'已检查部分已初始化',undefined:'未初始化，显示值不可靠',partially_undefined:'部分未初始化，显示值不可靠',unaddressable:'内存不可访问',partial_check:'只检查了部分内容，其余未知',unknown:'初始化状态无法确定'};
+ function variableLines(v){
+  const info=v.initialization||{},details=v.member_details;
+  const lines=['',v.name+(v.type?'（'+v.type+'）':'')+' · '+(v.role==='argument'?'函数参数':'局部变量')];
+  if(v.status&&v.status!=='available')return lines.concat('无法读取：'+v.value);
+  lines.push('检查结果：'+(initLabels[info.status]||'未提供初始化检查结果'));
+  if(info.reason)lines.push('检查范围说明：'+info.reason);
+  const members=details?.members||info.member_states?.filter(m=>m.name!=='$self')||[];
+  if(members.length){
+   lines.push('成员信息（字段 → 实际值 → 初始化状态）：');
+   for(const m of members){
+    const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;
+    const init=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);
+    const value=m.value===undefined?'旧现场未单独保存成员值':String(m.value);
+    lines.push('  '+name+(m.type?'（'+m.type+'）':'')+' = '+value+'；'+(details&&m.status!=='available'?'无法读取':(initLabels[init]||'初始化状态无法确定')));
+    if(m.note)lines.push('    '+m.note);
+   }
+   if(details?.note)lines.push('展示范围：'+details.note);
+   if(!details)lines.push('原始结构体值：'+v.value);
+   lines.push('定位提示：优先检查未初始化成员的赋值路径。发现未初始化不等于已证明本次错误使用了该成员；需结合报错行判断。');
+  }else lines.push('实际值：'+v.value);
+  return lines;
+ }
  function paint(e){
   const saved=captures.get(e.id);if(!saved)return;
   for(const node of document.getElementById('detail').children){
@@ -45,7 +68,7 @@ SCRIPT = r'''
     if(memory.explanation)lines.push(memory.explanation);
     lines.push(memory.range_explanation||'当前诊断未提供足够的内存块边界，无法确定合法访问范围。');
    }
-   for(const v of frame.variables||[])lines.push(v.name+' = '+v.value+(v.initialization?'\n初始化信息：'+JSON.stringify(v.initialization):''));
+   for(const v of frame.variables||[])lines.push(...variableLines(v));
    if(frame.index_analysis?.levels?.length){
     lines.push('嵌套索引逐级分析（源码现场推导）');
     for(const level of frame.index_analysis.levels){

@@ -263,6 +263,75 @@ def analyze_initialization_use(snapshot):
             'candidates': [{'frame': f['index'], 'name': v['name'], 'initialization': v['initialization']}
                            for f in snapshot['frames'] for v in f.get('variables', []) if v['initialization'].get('undefined_byte_offsets')]}
 
+def describe_members(value, initialization):
+    """Bounded member reads; never dereference pointers or call target functions."""
+    rows, notes = [], []
+    remaining = [256]
+    states = {m['name']: m['status'] for m in initialization.get('member_states', [])}
+    def visit(current, path='', depth=0):
+        remaining[0] -= 1
+        if remaining[0] < 0:
+            if not notes or notes[-1] != '成员遍历已达到上限':
+                notes.append('成员遍历已达到上限')
+            return
+        if len(rows) >= 64:
+            notes.append('最多展示 64 个成员，其余未展开')
+            return
+        try:
+            t = current.type.strip_typedefs()
+            if depth < 4 and t.code == getattr(gdb, 'TYPE_CODE_STRUCT', -1):
+                for field in t.fields():
+                    if remaining[0] <= 0 or len(rows) >= 64:
+                        notes.append('最多展示 64 个成员，其余未展开')
+                        break
+                    if not getattr(field, 'name', None) or not hasattr(field, 'bitpos'):
+                        notes.append('匿名成员、基类或静态成员未展开')
+                        continue
+                    name = path + '.' + field.name if path else field.name
+                    try:
+                        visit(current[field.name], name, depth + 1)
+                    except Exception as exc:
+                        if disconnected(str(exc)):
+                            raise CaptureDisconnected(str(exc))
+                        rows.append({'name': name, 'type': str(field.type), 'value': str(exc), 'status': 'unavailable'})
+                return
+            if depth < 4 and t.code == getattr(gdb, 'TYPE_CODE_ARRAY', -1):
+                lo, hi = t.range()
+                for index in range(lo, min(hi + 1, lo + 16)):
+                    if remaining[0] <= 0 or len(rows) >= 64:
+                        notes.append('最多展示 64 个成员，其余未展开')
+                        break
+                    visit(current[index], path + '[%d]' % index, depth + 1)
+                if hi - lo + 1 > 16:
+                    notes.append('数组仅展示前 16 个元素')
+                return
+            row = {'name': path, 'type': str(current.type), 'initialization': states.get(path, 'unknown')}
+            if current.is_optimized_out:
+                row.update(status='optimized_out', value='已被编译器优化，无法读取')
+            elif getattr(current, 'is_unavailable', False):
+                row.update(status='unavailable', value='当前调试目标无法提供该成员值')
+            else:
+                row.update(status='available', value=current.format_string(raw=True)[:512])
+            if t.code == getattr(gdb, 'TYPE_CODE_PTR', -1):
+                row['note'] = '这是指针地址；未读取它指向的内容，也未验证该地址是否可访问'
+            elif t.code == getattr(gdb, 'TYPE_CODE_UNION', -1):
+                row['note'] = '联合体当前有效成员未知，不判断哪个成员正在使用'
+            elif t.code in (getattr(gdb, 'TYPE_CODE_STRUCT', -1), getattr(gdb, 'TYPE_CODE_ARRAY', -1)):
+                row['note'] = '已达到 4 层展开上限，保留原始值'
+            rows.append(row)
+        except Exception as exc:
+            if disconnected(str(exc)):
+                raise CaptureDisconnected(str(exc))
+            rows.append({'name': path, 'status': 'unavailable', 'value': str(exc)})
+    try:
+        if value.type.strip_typedefs().code not in (getattr(gdb, 'TYPE_CODE_STRUCT', -1), getattr(gdb, 'TYPE_CODE_ARRAY', -1)):
+            return None
+        visit(value)
+        return {'members': rows, 'note': '；'.join(dict.fromkeys(notes))}
+    except Exception:
+        return None
+
+
 def capture_variables(frame, budget=None):
     if budget is None:
         budget = {'queries': 256, 'bytes': 32768}
@@ -289,6 +358,9 @@ def capture_variables(frame, budget=None):
                         rendered = value.format_string(raw=True)
                         row.update(status='available', value=rendered[:4096], truncated=len(rendered) > 4096)
                         row['initialization'] = check_initialization(value, budget)
+                        details = describe_members(value, row['initialization'])
+                        if details is not None:
+                            row['member_details'] = details
                 except Exception as exc:
                     if disconnected(str(exc)):
                         raise CaptureDisconnected(str(exc))

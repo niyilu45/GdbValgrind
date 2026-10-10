@@ -5,7 +5,9 @@ import argparse
 from pathlib import Path
 import subprocess
 import sys
+import runpy
 
+runpy.run_path(str(Path(__file__).resolve().parent / 'inc' / 'bootstrap.py'))
 from inc import DebugOptions, collect_run, debug_error, export_report, load_report, serve_report
 from inc.cli import main as cli_main
 from inc.versions import print_tool_versions

@@ -13,6 +13,33 @@ from inc import cli
 
 
 class CaptureTests(unittest.TestCase):
+    def test_struct_member_values_are_bounded_and_do_not_follow_pointers(self):
+        class Value:
+            is_optimized_out = False
+            def __init__(self, data, code):
+                self.data = data
+                self.type = SimpleNamespace(code=code)
+                self.type.strip_typedefs = lambda: self.type
+                self.type.fields = lambda: [SimpleNamespace(name=n, bitpos=0, type='int') for n in data]
+                self.type.range = lambda: (0, len(data)-1)
+            def __getitem__(self, key):
+                if self.type.code == 4:
+                    raise AssertionError('must not dereference pointers')
+                return self.data[key]
+            def format_string(self, **kwargs):
+                return str(self.data)
+        obj = Value({'count': Value(7, 1), 'nested': Value({'limit': Value(99, 1)}, 7),
+                     'ptr': Value('0x1234', 4), 'items': Value([Value(i, 1) for i in range(100)], 6)}, 7)
+        info = {'member_states': [{'name': 'nested.limit', 'status': 'undefined'}]}
+        result = self.scope['describe_members'](obj, info)
+        rows = {row['name']: row for row in result['members']}
+        self.assertEqual(rows['count']['value'], '7')
+        self.assertEqual(rows['nested.limit']['initialization'], 'undefined')
+        self.assertIn('未读取', rows['ptr']['note'])
+        self.assertIn('items[15]', rows)
+        self.assertNotIn('items[16]', rows)
+        self.assertIn('16', result['note'])
+
     def test_memory_access_allowed_and_actual_ranges(self):
         facts = self.scope['memory_facts']
         for relation, distance, expected in [('after',0,40),('before',4,-4),('inside',38,38)]:
