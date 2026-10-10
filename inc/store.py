@@ -19,7 +19,11 @@ class ErrorStore:
                 what TEXT, payload TEXT, count INTEGER, records INTEGER,
                 bytes INTEGER, blocks INTEGER, files TEXT, search TEXT,
                 author TEXT DEFAULT '', enriched TEXT, retry_at REAL DEFAULT 0,
-                author_done INTEGER DEFAULT 0, ready INTEGER DEFAULT 0, attempts INTEGER DEFAULT 0);
+                author_done INTEGER DEFAULT 0, ready INTEGER DEFAULT 0, attempts INTEGER DEFAULT 0,
+                detail_version INTEGER DEFAULT 0);
+            CREATE TRIGGER detail_changed AFTER UPDATE OF enriched ON issues BEGIN
+                UPDATE issues SET detail_version=detail_version+1 WHERE seq=new.seq;
+            END;
             CREATE TABLE uids(uid TEXT PRIMARY KEY, issue TEXT, count INTEGER, known INTEGER);
             CREATE INDEX kinds ON issues(kind);
             CREATE INDEX authors ON issues(author);

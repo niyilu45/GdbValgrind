@@ -56,10 +56,13 @@ class PagedHandler(Handler):
                         if not value('author') or author == ('' if value('author')=='missing' else value('author')[7:]):
                             kinds[k] = kinds.get(k,0)+n
                     if value('q') or value('file'):
-                        kinds = {r['kind']:r['n'] for r in db.execute('SELECT kind,count(*) n FROM issues WHERE '+base+' GROUP BY kind',params)}
-                        author_counts = {r['author']:r['n'] for r in db.execute(
-                            "SELECT author,sum(CASE WHEN kind='Leak_StillReachable' THEN 0 ELSE 1 END) n FROM issues WHERE "
-                            +author_where+' GROUP BY author', author_params)}
+                        kinds, author_counts = {}, {}
+                        for group in db.execute('SELECT kind,author,count(*) n FROM issues WHERE '
+                                                +author_where+' GROUP BY kind,author', author_params):
+                            k, author, n = group['kind'], group['author'], group['n']
+                            author_counts[author] = author_counts.get(author,0)+(0 if k=='Leak_StillReachable' else n)
+                            if not value('author') or author == ('' if value('author')=='missing' else value('author')[7:]):
+                                kinds[k] = kinds.get(k,0)+n
                     if value('kind'):
                         clauses.append('kind=?'); params.append(value('kind'))
                     where = ' AND '.join(clauses) or '1'
@@ -69,6 +72,16 @@ class PagedHandler(Handler):
                     status = db.execute("SELECT value FROM metadata WHERE key='status'").fetchone()
                     return self.reply(200, {'errors': rows, 'total':total,'kinds':kinds,'totals':totals,'authors':authors,'pending':pending,'status':json.loads(status[0]) if status else {},'worker_error':owner.report.get('source_worker_error','')})
                 if path.path == '/api/issue':
+                    revision = None
+                    if owner.detail_versions is None:
+                        owner.detail_versions = any(r['name']=='detail_version' for r in db.execute('PRAGMA table_info(issues)'))
+                    if owner.detail_versions:
+                        stamp = db.execute('SELECT detail_version,count,records,bytes,blocks,ready FROM issues WHERE id=?',
+                                           (value('id'),)).fetchone()
+                        if stamp is not None:
+                            revision = ':'.join(str(v) for v in stamp)
+                            if revision == value('version'):
+                                return self.reply(200, {'unchanged':True, 'ready':bool(stamp['ready']), 'version':revision})
                     row = db.execute('SELECT * FROM issues WHERE id=?',(value('id'),)).fetchone()
                     if row is None:
                         return self.reply(404, {'message':'错误不存在'})
@@ -88,7 +101,7 @@ class PagedHandler(Handler):
                         files = {k:v for k,v in owner.source_files.items() if k in ids}
                     payload = browser_report({'errors':[item], 'source_files':files,
                                               'project':owner.report.get('project',''), 'source_pending':not bool(row['ready'])},compact=True)
-                    return self.reply(200, {'report':payload,'ready':bool(row['ready'])})
+                    return self.reply(200, {'report':payload,'ready':bool(row['ready']), 'version':revision})
         except (ValueError, OSError) as exc:
             return self.reply(400, {'message': str(exc)})
         except sqlite3.Error:
@@ -99,6 +112,7 @@ class PagedHandler(Handler):
 class PagedReport:
     def __init__(self, path, report, port):
         self.path, self.report = path, {**report, 'paged':True, 'live':False}
+        self.detail_versions = None
         self.server = DebugServer(self.report, port)
         self.server.RequestHandlerClass = PagedHandler
         self.server.owner = self

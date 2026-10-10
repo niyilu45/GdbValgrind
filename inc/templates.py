@@ -145,17 +145,17 @@ if(report.live){
 PAGED_SCRIPT = r'''
 if(report.paged){
  let offset=0,requestId=0,detailId=0,detailReady=false,timer,pageController=null,detailController=null,detailLoading=false;
- let authorKey='',navKey='',listKey='',detailKey='';
+ let authorKey='',navKey='',listKey='',detailKey='',detailVersion='';
  $('mode').textContent='实时采集 · SQLite 分页';
  const banner=el('div','错误增量入库，源码与 blame 在后台加载。','notice');$('notice').replaceChildren(banner);
  const paging=el('div',undefined,'controls'),prev=el('button','上一页','secondary'),next=el('button','下一页','secondary');paging.append(prev,next);$('list').after(paging);
  async function loadDetail(id){
   const version=++detailId;const changed=selected!==id;selected=id;detailLoading=true;
   if(detailController)detailController.abort();const controller=new AbortController();detailController=controller;const timeout=setTimeout(()=>controller.abort(),10000);
-  if(changed){rememberDetail();detailKey='';$('detail').replaceChildren(el('p','正在加载调用栈…','notice'))}
+  if(changed){rememberDetail();detailVersion='';detailKey='';$('detail').replaceChildren(el('p','正在加载调用栈…','notice'))}
   for(const b of $('list').children)if(b.dataset.errorId)b.setAttribute('aria-current',String(b.dataset.errorId===id));
-  try{const response=await fetch('/api/issue?id='+encodeURIComponent(id),{cache:'no-store',signal:controller.signal});if(!response.ok)throw Error('HTTP '+response.status);const data=await response.json();if(version!==detailId||id!==selected)return;
-   const value=restoreSources(data.report);report.source_files=value.source_files;report.source_access=value.source_access;report.project=value.project??report.project;report.source_pending=value.source_pending;detailReady=data.ready;const key=JSON.stringify(data);if(key===detailKey)return;detailKey=key;detail(value.errors[0]);
+  try{const response=await fetch('/api/issue?id='+encodeURIComponent(id)+'&version='+encodeURIComponent(detailVersion),{cache:'no-store',signal:controller.signal});if(!response.ok)throw Error('HTTP '+response.status);const data=await response.json();if(version!==detailId||id!==selected)return;
+   detailReady=data.ready;if(data.unchanged)return;const key=data.version||JSON.stringify(data);detailVersion=data.version||'';if(key===detailKey)return;detailKey=key;const value=restoreSources(data.report);report.source_files=value.source_files;report.source_access=value.source_access;report.project=value.project??report.project;report.source_pending=value.source_pending;detail(value.errors[0]);
    if(!data.ready)$('detail').prepend(el('p',value.errors[0].source_progress||'源码和 blame 后台加载中；可继续浏览或切换错误。','notice'));
   }catch(error){if(version===detailId){detailReady=false;let note=$('detailRetry');if(!note){note=el('p',undefined,'notice');note.id='detailRetry';$('detail').prepend(note)}note.replaceChildren(document.createTextNode('详情暂未加载成功，已保留现有内容。'),el('span',error.name==='AbortError'?'请求超时。':error.message));const retry=el('button','重试详情','secondary');retry.onclick=()=>loadDetail(id);note.append(retry)}}
   finally{clearTimeout(timeout);if(version===detailId){detailLoading=false;detailController=null}}

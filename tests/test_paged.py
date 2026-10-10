@@ -143,6 +143,16 @@ class PagedTests(unittest.TestCase):
                 self.assertEqual(detail['report']['project'],directory)
                 self.assertTrue(detail['report']['source_pending'])
                 self.assertEqual(detail['report']['errors'][0]['stacks'][0]['frames'][0]['source_note'],'源码尚在后台加载')
+                version = detail['version']
+                unchanged = get('/api/issue?id='+data['errors'][0]['id']+'&version='+version)
+                self.assertTrue(unchanged['unchanged'])
+                self.assertNotIn('report', unchanged)
+                with connect(store.path) as db:
+                    db.execute('UPDATE issues SET enriched=payload WHERE id=?', (data['errors'][0]['id'],))
+                    db.commit()
+                changed = get('/api/issue?id='+data['errors'][0]['id']+'&version='+version)
+                self.assertIn('report', changed)
+                self.assertNotEqual(changed['version'], version)
             self.assertFalse(live.worker.is_alive())
 
     def test_author_only_innermost_and_reachable_count_excluded(self):
