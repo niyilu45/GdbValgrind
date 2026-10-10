@@ -126,7 +126,7 @@ class ReportTests(unittest.TestCase):
         report = self.load(xml(error() + error('2', frames=frame(line=30))))
         html = av.render_html(report)
         payload = json.loads(html.split('<script id="report-data" type="application/json">')[1].split('</script>')[0])
-        self.assertNotIn('source', payload['errors'][0]['stacks'][0]['frames'][0])
+        self.assertIn('source', payload['errors'][0]['stacks'][0]['frames'][0])
         self.assertIn('source', report['errors'][0]['stacks'][0]['frames'][0])
         self.assertEqual(len(payload['source_files']), 1)
 

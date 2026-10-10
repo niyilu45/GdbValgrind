@@ -24,7 +24,7 @@ def browser_report(report, source_base='/source/'):
     errors = []
     for error in report['errors']:
         item = {k: v for k, v in error.items() if k != 'unique_ids'}
-        item['stacks'] = [{**s, 'frames': [{k: v for k, v in f.items() if k != 'source'} for f in s['frames']]} for s in error['stacks']]
+        item['stacks'] = error['stacks']
         errors.append(item)
     return {**report, 'source_access': 'server' if source_base is not None else 'local', 'errors': errors, 'source_files': {key: {'path': f['path'], 'url': (source_base + key + '.html') if source_base is not None else 'file:///' + quote(f['path'].replace(chr(92), '/').lstrip('/'), safe='/:' )} for key, f in files.items()}}
 

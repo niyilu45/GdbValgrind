@@ -102,3 +102,10 @@ for(const label of ['非法写入','确定泄漏'])assert.equal(check.ids.get('n
 check.ids.get('resetFilters').onclick();check.ids.get('list').children[0].onclick();
 assert.equal(check.ids.get('detail').children[0].textContent,'查看代码文件');
 assert.equal(check.ids.get('detail').children[0].disabled,false);
+const blameUI=setup(original);
+assert.equal(blameUI.ids.get('showBlame').checked,true);
+blameUI.ids.get('showBlame').checked=false;blameUI.ids.get('showBlame').onchange();
+assert.equal(blameUI.ids.get('showBlame').checked,false);
+blameUI.ids.get('list').children[1].onclick();
+assert.equal(blameUI.ids.get('showBlame').checked,false);
+assert(blameUI.run('report.errors.some(e=>e.stacks.some(s=>s.frames.some(f=>f.source?.length)))'));
