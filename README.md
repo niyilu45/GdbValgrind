@@ -398,4 +398,4 @@ python3 -m unittest discover -s tests -v
 python3 /opt/GdbValgrind/aivalgrind.py analyze --step3-only --xml /data/run/errors.xml --base-report /data/run/report.html --output-dir /data/step3 -- /path/to/app
 ```
 
-有配套 `run.json` 时可省略 `--` 后的程序参数。`--base-report` 默认是 XML 同目录的 `report.html`，也可指定步骤二保存的其他 HTML。步骤三沿用该 HTML，不重新查询源码或 blame；每两秒检查新现场，变化时更新 `/data/step3/full-report.html`。打开页面后每三秒刷新，结束或中断后保存最终版并停止刷新。报告顶部“查看步骤三变量现场”链接可查看内嵌的变量、调用栈及内存诊断，不会将所有现场错误地关联到历史第一条错误。通过 SSH 使用时，需要浏览服务器上持续更新的文件（例如静态 HTTP 服务加 SSH 转发）；提前复制到本机的文件不会同步变化。
+有配套 `run.json` 时可省略 `--` 后的程序参数。`--base-report` 默认是 XML 同目录的 `report.html`，也可指定步骤二保存的其他 HTML。步骤三沿用该 HTML，不重新查询源码或 blame；每两秒检查新现场，变化时更新 `/data/step3/full-report.html`。打开页面后通过同目录的 `capture-updates.js` 每两秒增量更新现场，不刷新整页，保留筛选、展开和阅读位置；结束或中断后保存最终版并停止轮询。实时浏览需同时保留该文件，最终 HTML 可单独离线查看。报告顶部“查看步骤三变量现场”链接可查看内嵌的变量、调用栈及内存诊断，不会将所有现场错误地关联到历史第一条错误。通过 SSH 使用时，需要浏览服务器上持续更新的文件（例如静态 HTTP 服务加 SSH 转发）；提前复制到本机的文件不会同步变化。

@@ -35,7 +35,9 @@ class WorkflowTests(unittest.TestCase):
                             break
                         time.sleep(.05)
                     self.assertIn('value = &lt;42&gt;', live)
-                    self.assertIn('http-equiv="refresh"', live)
+                    self.assertNotIn('http-equiv="refresh"', live)
+                    self.assertIn('aivCaptureUpdate', live)
+                    self.assertIn('value =', (output / 'capture-updates.js').read_text(encoding='utf-8'))
                 return 0
             manager = MagicMock()
             probe = manager.__enter__.return_value.launch.return_value
