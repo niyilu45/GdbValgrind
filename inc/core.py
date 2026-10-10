@@ -19,7 +19,7 @@ import tempfile
 import threading
 import webbrowser
 import xml.etree.ElementTree as ET
-from .templates import HTML
+from .templates import HTML, PAGED_SCRIPT
 from .capture import GDB_CAPTURE_SCRIPT
 from .processes import ProcessSession, interrupt_scope
 from .xmlstream import read_xml
@@ -30,7 +30,6 @@ from functools import lru_cache
 from .output import register_capture
 from .sourcepages import browser_report, source_page
 from .blame import source_blame
-from .paged_ui import SCRIPT as PAGED_SCRIPT
 
 
 def integer(value, default=0):
