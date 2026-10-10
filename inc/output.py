@@ -67,7 +67,7 @@ def prepare_output(directory, names, protected=()):
         data = read_manifest(session) if session.exists() else None
         if data:
             for filename in data['files']:
-                if filename not in ('capture.py', 'valgrind.log') and not re.fullmatch(r'error-\d+\.(json|txt|html)', filename):
+                if filename not in ('capture.py', 'valgrind.log', 'connection-error.txt') and not re.fullmatch(r'error-\d+\.(json|txt|html)', filename):
                     raise ValueError('采集清单含未知文件，未清理')
                 path = session / filename
                 if path.is_symlink() or (path.exists() and not path.is_file()):
@@ -95,7 +95,7 @@ def prepare_output(directory, names, protected=()):
 
 
 def register_capture(session):
-    write_manifest(session, ['capture.py', 'valgrind.log'])
+    write_manifest(session, ['capture.py', 'valgrind.log', 'connection-error.txt'])
     root = session.parent.parent
     if session.parent.name == 'captures' and not session.parent.is_symlink():
         data = read_manifest(root)

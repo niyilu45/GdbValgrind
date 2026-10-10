@@ -8,6 +8,7 @@ import sys
 
 from inc import DebugOptions, collect_run, debug_error, export_report, load_report, serve_report
 from inc.cli import main as cli_main
+from inc.versions import print_tool_versions
 
 
 def example_collect(command, output_dir):
@@ -70,6 +71,7 @@ def main(argv=None):
     if args.scenario in ("report", "browse") and command:
         parser.error("此示例不执行程序，无需提供 -- 后的参数")
     try:
+        print_tool_versions(args.scenario)
         if args.scenario == 'collect':
             return example_collect(command, args.output_dir)
         elif args.scenario == "report":

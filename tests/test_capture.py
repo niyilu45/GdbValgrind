@@ -92,6 +92,27 @@ class CaptureTests(unittest.TestCase):
         self.assertFalse(list(self.root.glob('*.json')))
         self.assertTrue(any('无法读取错误计数' in x for x in self.messages))
 
+    def test_disconnect_aborts_scan_and_records_failure_without_retry(self):
+        self.count = 1
+        calls = []
+        original = self.execute
+        def execute(command, **kwargs):
+            calls.append(command)
+            if 'get_vbits' in command:
+                raise RuntimeError('Remote communication error. Target disconnected: Connection reset by peer')
+            return original(command, **kwargs)
+        self.gdb.execute = execute
+        self.frame.read_var = lambda symbol: SimpleNamespace(type=self.value_type(), address=0x100,
+            is_optimized_out=False, format_string=lambda **kwargs: '0')
+        self.collector.on_stop(None)
+        self.assertEqual(sum('get_vbits' in c for c in calls), 1)
+        failure = self.root / 'connection-error.txt'
+        self.assertIn('Connection reset by peer', failure.read_text(encoding='utf-8'))
+        self.assertFalse(list(self.root.glob('error-*.json')))
+        self.assertFalse(self.collector.active)
+        self.collector.on_stop(None)
+        self.assertEqual(sum('get_vbits' in c for c in calls), 1)
+
     def test_unreadable_error_does_not_mark_seen(self):
         self.count = 1
         self.error = '[unavailable: unsupported]'

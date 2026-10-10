@@ -7,6 +7,7 @@ import sys
 from .core import load_report, render_html, serve, run_debug
 from .collect import collect_run, print_summary, summary_data
 from .workflow import analyze_run
+from .versions import print_tool_versions
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -57,6 +58,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     args.command = command
     try:
+        print_tool_versions(args.action, debug_enabled=args.action == 'serve' and bool(command))
         if args.action == 'analyze':
             return analyze_run(command, args.output_dir, xml_path=args.xml, project_dir=args.project_dir,
                                cwd=args.cwd, stdin_file=args.stdin_file, live_port=None if args.no_web else args.port,

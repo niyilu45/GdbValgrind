@@ -93,3 +93,17 @@ async function testLive(){
  console.log('Live report: new errors, preserved filters, heartbeat, failure and recovery passed.');
 }
 testLive().catch(error=>{console.error(error);process.exitCode=1;});
+const filteredReport=JSON.parse(JSON.stringify(original));
+filteredReport.errors.push({...filteredReport.errors[0],id:'reachable',kind:'Leak_StillReachable',stacks:[{label:'stack',frames:[{file:'only.c',fn:'only'}]}]});
+const check=setup(filteredReport);
+check.ids.get('fileFilter').value='only.c';check.ids.get('fileFilter').oninput();
+assert.equal(check.run('filtered.length'),1);
+assert.equal(check.ids.get('nav').children[0].children[1].textContent,'1');
+assert.equal(check.ids.get('nav').children.find(n=>n.children[0].textContent==='仍可访问').children[1].textContent,'1');
+check.ids.get('fileFilter').value='missing.c';check.ids.get('fileFilter').oninput();
+assert.equal(check.run('filtered.length'),0);
+assert.equal(check.ids.get('nav').children.find(n=>n.children[0].textContent==='仍可访问').children[1].textContent,'0');
+for(const label of ['非法写入','确定泄漏'])assert.equal(check.ids.get('nav').children.find(n=>n.children[0].textContent===label).className,'danger-kind');
+check.ids.get('resetFilters').onclick();check.ids.get('list').children[0].onclick();
+assert.equal(check.ids.get('detail').children[0].textContent,'查看代码文件');
+assert.equal(check.ids.get('detail').children[0].disabled,false);

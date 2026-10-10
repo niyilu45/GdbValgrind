@@ -106,6 +106,23 @@ class ReportTests(unittest.TestCase):
     def test_unknown_locations_not_overmerged(self):
         self.assertEqual(len(self.load(xml(error(frames=frame(file="", line=0))+error("2", frames=frame(ip="0x222", file="", line=0))))["errors"]), 2)
 
+    def test_uninitialized_named_library_frames_merge_but_origins_remain_distinct(self):
+        first = error(kind='UninitCondition', what='Conditional jump depends on uninitialised value(s)',
+                      frames=frame(file='', line=0, fn='library') + frame())
+        second = first.replace('0x1</unique>', '0x2</unique>').replace('0x111', '0x222')
+        report = self.load(xml(first + second))
+        self.assertEqual(len(report['errors']), 1)
+        self.assertEqual(report['errors'][0]['records'], 2)
+        self.assertEqual(len(self.load(xml(first + second.replace('<line>15', '<line>16')))['errors']), 2)
+
+    def test_html_omits_repeated_source_excerpts_without_changing_report(self):
+        report = self.load(xml(error() + error('2', frames=frame(line=30))))
+        html = av.render_html(report)
+        payload = json.loads(html.split('<script id="report-data" type="application/json">')[1].split('</script>')[0])
+        self.assertNotIn('source', payload['errors'][0]['stacks'][0]['frames'][0])
+        self.assertIn('source', report['errors'][0]['stacks'][0]['frames'][0])
+        self.assertEqual(len(payload['source_files']), 1)
+
     def test_leak_aggregate_and_repeated_unique(self):
         first = error(kind="Leak_DefinitelyLost", extra="<xwhat><leakedbytes>64</leakedbytes><leakedblocks>1</leakedblocks></xwhat>")
         second = error("2", kind="Leak_DefinitelyLost", what="128 bytes in 2 blocks", extra="<xwhat><leakedbytes>128</leakedbytes><leakedblocks>2</leakedblocks></xwhat>")

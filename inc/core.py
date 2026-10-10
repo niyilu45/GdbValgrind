@@ -103,9 +103,13 @@ class Sources:
             frame["source_note"] = "无法读取源码: " + str(exc)
 
 
-def frame_key(frame):
+def frame_key(frame, function_only=False):
     if frame.get("file") and integer(frame.get("line")) > 0:
         return tuple(frame.get(k, "") for k in ("obj", "fn", "dir", "file", "line"))
+    if function_only and frame.get('fn') and frame.get('fn') != '???':
+        # Named library frames often have no line information. ASLR and the
+        # instruction offset within that same function are not distinct paths.
+        return (frame.get('obj', ''), frame['fn'])
     # Without symbols, keep the address: merging different unknown sites is worse
     # than missing a duplicate across ASLR runs.
     return (frame.get("obj", ""), frame.get("fn", ""), frame.get("ip", ""))
@@ -145,7 +149,7 @@ def report_from_root(root, xml_path, project=None, xml_complete=True):
                 for stack in child.findall("stack"):
                     stacks.append({"label": child.findtext("what", "未初始化值来源"), "frames": [{k: f.findtext(k, "") for k in ("ip", "obj", "fn", "dir", "file", "line")} for f in stack.findall("frame")]})
         signature = [kind, "" if kind.startswith("Leak_") else normalized(what),
-                     [(diagnostic_label(s["label"]), [frame_key(f) for f in s["frames"]]) for s in stacks]]
+                     [(diagnostic_label(s["label"]), [frame_key(f, kind in ('UninitCondition', 'UninitValue')) for f in s["frames"]]) for s in stacks]]
         if not any(s["frames"] for s in stacks):
             signature.append(uid or ET.tostring(error, encoding="unicode"))
         key = json.dumps(signature, ensure_ascii=False, sort_keys=True)
@@ -379,7 +383,17 @@ def _run_debug(error, args, processes):
                     result = gdb.wait(timeout=0.25)
                     break
                 except subprocess.TimeoutExpired:
+                    if auto_values:
+                        failure = session / 'connection-error.txt'
+                        if failure.exists():
+                            raise ValueError(failure.read_text(encoding='utf-8') + '\n诊断目录: ' + str(session))
+                        target_result = vg.poll()
+                        if isinstance(target_result, int):
+                            print('Valgrind/目标进程已退出（退出码 %s），结束自动采集并清理 GDB。日志: %s' % (target_result, session / 'valgrind.log'), flush=True)
+                            return target_result
                     continue
+            if auto_values and (session / 'connection-error.txt').exists():
+                raise ValueError((session / 'connection-error.txt').read_text(encoding='utf-8'))
             if restart is not None and restart.exists() and result == 0:
                 request = json.loads(restart.read_text(encoding='utf-8'))
                 selected = next(e for e in args.navigation_errors if e['id'] == request['id'])
@@ -398,7 +412,17 @@ def _run_debug(error, args, processes):
 
 
 def render_html(report, token=""):
-    payload = json.dumps({**report, "token": token}, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    # Full source already lives once in source_files. Do not repeat the same
+    # 21-line excerpts for every frame of every error in the offline artifact.
+    files = report.get('source_files', {})
+    errors = []
+    for error in report['errors']:
+        item = {k: v for k, v in error.items() if k != 'unique_ids'}
+        item['stacks'] = [{**stack, 'frames': [
+            {k: v for k, v in frame.items() if k != 'source' or frame.get('source_file_id') not in files}
+            for frame in stack['frames']]} for stack in error['stacks']]
+        errors.append(item)
+    payload = json.dumps({**report, 'errors': errors, "token": token}, ensure_ascii=False, separators=(',', ': ')).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     return HTML.replace("__REPORT_DATA__", payload)
 
 

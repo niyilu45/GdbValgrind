@@ -10,6 +10,32 @@ from inc import core
 
 
 class GDBCapabilityTests(unittest.TestCase):
+    def test_disconnected_capture_ends_supervisor_wait_and_cleans_processes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / 'app'
+            binary.touch()
+            session = root / 'capture'
+            session.mkdir()
+            script = session / 'capture.py'
+            script.touch()
+            error = {'id': 'one', 'kind': 'InvalidWrite', 'what': 'Invalid write', 'stacks': []}
+            args = SimpleNamespace(frame=None, auto_values=True, command=[str(binary)], cwd=directory,
+                project_dir=None, stdin_file=None, capture_dir=directory, stop_on_error=False)
+            probe = MagicMock(returncode=0)
+            probe.communicate.return_value = ('Python OK', '')
+            vg, debugger, processes = MagicMock(pid=123), MagicMock(), MagicMock()
+            def fail_wait(**kwargs):
+                (session / 'connection-error.txt').write_text('Connection reset by peer', encoding='utf-8')
+                raise subprocess.TimeoutExpired('gdb', 0.25)
+            debugger.wait.side_effect = fail_wait
+            processes.launch.side_effect = [probe, vg, debugger]
+            with patch.object(core.sys.stdin, 'isatty', return_value=True), patch.object(core.shutil, 'which', side_effect=lambda n: '/usr/bin/' + n), patch.object(core, 'prepare_capture', return_value=(session, script)), patch('sys.stdout', io.StringIO()):
+                with self.assertRaisesRegex(ValueError, 'Connection reset by peer'):
+                    core._run_debug(error, args, processes)
+            debugger.wait.assert_called_once()
+            processes.close.assert_called_once()
+
     def exercise(self, auto=False, diagnostic='Python scripting is not supported in this copy of GDB.', timeout=False):
         with tempfile.TemporaryDirectory() as directory:
             binary = Path(directory) / 'app'

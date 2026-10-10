@@ -33,14 +33,16 @@ const position=f=>f.file?f.file+(f.line?':'+f.line:''):(f.fn||f.obj||'无符号�
 const shellQuote=s=>/^[A-Za-z0-9_@%+=:,./-]+$/.test(s)?s:'"'+s.replace(/[\\"$`]/g,'\\$&')+'"';
 const normalize=s=>String(s||'').replace(/\\/g,'/').toLowerCase();
 let indexed=[],kindCounts=new Map();
-function indexReport(){indexed=report.errors.map((e,index)=>{const frames=e.stacks.flatMap(s=>s.frames);const files=frames.flatMap(f=>[f.file,f.local_file,f.file?(f.dir?f.dir.replace(/[\\/]$/,'')+'/':'')+f.file:'']).filter(Boolean);return {e,index,files:files.map(normalize),text:normalize([e.kind,typeName(e.kind),e.what,e.id,...files,...frames.flatMap(f=>[f.fn,f.obj])].join(' '))}});kindCounts=new Map();for(const e of report.errors)kindCounts.set(e.kind,(kindCounts.get(e.kind)||0)+1)}
+function indexReport(){for(const e of report.errors)for(const stack of e.stacks)for(const f of stack.frames){const file=report.source_files?.[f.source_file_id],n=Number(f.line);if(!f.source&&file&&n>0&&n<=file.lines.length)f.source=file.lines.slice(Math.max(0,n-11),n+10).map((text,i)=>({number:Math.max(0,n-11)+i+1,text}));}indexed=report.errors.map((e,index)=>{const frames=e.stacks.flatMap(s=>s.frames);const files=frames.flatMap(f=>[f.file,f.local_file,f.file?(f.dir?f.dir.replace(/[\\/]$/,'')+'/':'')+f.file:'']).filter(Boolean);return {e,index,files:files.map(normalize),text:normalize([e.kind,typeName(e.kind),e.what,e.id,...files,...frames.flatMap(f=>[f.fn,f.obj])].join(' '))}});kindCounts=new Map();for(const e of report.errors)kindCounts.set(e.kind,(kindCounts.get(e.kind)||0)+1)}
 indexReport();
 let filtered=[];
 function selectError(e){selected=e.id;for(const b of $('list').children)if(b.dataset.errorId)b.setAttribute('aria-current',String(b.dataset.errorId===selected));detail(e);try{history.replaceState(null,'','#'+e.id)}catch{}if(innerWidth<1100)$('detail').scrollIntoView({behavior:'auto'})}
+function matchingRows(){const query=normalize($('search').value.trim()),file=normalize($('fileFilter').value.trim());return indexed.filter(row=>row.text.includes(query)&&(!file||row.files.some(path=>path.includes(file))))}
 function nav(){
+ const matching=matchingRows();kindCounts=new Map();for(const row of matching)kindCounts.set(row.e.kind,(kindCounts.get(row.e.kind)||0)+1);
  $('nav').replaceChildren();
  const kinds=['',...new Set(report.errors.map(e=>e.kind))];
- for(const k of kinds){const b=el('button');if(['InvalidRead','InvalidWrite','Leak_DefinitelyLost'].includes(k))b.className='danger-kind';b.append(el('span',k?typeName(k):'全部问题'),el('span',String(k?kindCounts.get(k):report.errors.length)));b.setAttribute('aria-current',String(k===kind));b.onclick=()=>{kind=k;nav();list()};$('nav').append(b)}
+ for(const k of kinds){const b=el('button');if(['InvalidRead','InvalidWrite','Leak_DefinitelyLost'].includes(k))b.className='danger-kind';b.append(el('span',k?typeName(k):'全部问题'),el('span',String(k?(kindCounts.get(k)||0):matching.length)));b.setAttribute('aria-current',String(k===kind));b.onclick=()=>{kind=k;nav();list()};$('nav').append(b)}
 }
 function openSourceFile(frame){
  const file=report.source_files?.[frame.source_file_id];if(!file)return;
@@ -52,7 +54,7 @@ function openSourceFile(frame){
  window.open(url+'#L'+Number(frame.line),'_blank','noopener,noreferrer');setTimeout(()=>URL.revokeObjectURL(url),60000);
 }
 function list(reset=true){
- if(reset){visibleLimit=100;const query=normalize($('search').value.trim()),file=normalize($('fileFilter').value.trim());filtered=indexed.filter(row=>(!kind||row.e.kind===kind)&&row.text.includes(query)&&(!file||row.files.some(path=>path.includes(file))));}
+ if(reset){visibleLimit=100;filtered=matchingRows().filter(row=>!kind||row.e.kind===kind);nav();}
  const errors=filtered.map(row=>row.e);
  $('listCount').textContent='共 '+report.errors.length+' 个错误位置 · 筛选后 '+errors.length+' 个 · 已显示 '+Math.min(visibleLimit,errors.length)+' 个 · '+countPrefix+errors.reduce((n,e)=>n+e.count,0)+' 次记录';$('list').replaceChildren();
  for(const {e,index} of filtered.slice(0,visibleLimit)){const b=el('button',undefined,'issue');b.dataset.errorId=e.id;b.setAttribute('aria-current',String(e.id===selected));const t=el('span',undefined,'type');t.append(el('span','第 '+(index+1)+' 条 · '+e.kind),el('span','× '+countPrefix+e.count));b.append(t,el('strong',e.what));const frames=e.stacks[0]?.frames||[];const f=frames.find(f=>f.local_file)||frames.find(f=>f.file)||frames[0];b.append(el('small',f?position(f):'无调用栈'));b.onclick=()=>selectError(e);$('list').append(b)}
@@ -61,7 +63,7 @@ function list(reset=true){
  if(selected&&!errors.some(e=>e.id===selected)){selected=null;$('detail').replaceChildren(el('div','选择当前列表中的错误以查看详情。','empty'))}
 }
 function detail(e){
- const main=$('detail');main.replaceChildren();main.append(el('div',typeName(e.kind)+' / '+e.kind,'kind'),el('h2',e.what),el('div','错误 ID '+e.id,'meta'));
+ const main=$('detail');main.replaceChildren();const sourceFrame=e.stacks.flatMap(s=>s.frames).find(f=>report.source_files?.[f.source_file_id]);const sourceButton=el('button','查看代码文件','secondary');sourceButton.disabled=!sourceFrame;sourceButton.onclick=()=>openSourceFile(sourceFrame);main.append(sourceButton);if(!sourceFrame)main.append(el('p','完整源码未嵌入：请使用 --project-dir 指定工程目录重新生成报告，并确认源码路径可解析。','meta'));main.append(el('div',typeName(e.kind)+' / '+e.kind,'kind'),el('h2',e.what),el('div','错误 ID '+e.id,'meta'));
  main.append(el('p',countPrefix+e.count+' 次记录 · 合并 '+e.records+' 条 XML 错误'+(e.kind.startsWith('Leak_')?' · '+e.leaked_bytes+' 字节 / '+e.leaked_blocks+' 个块':''),'summary'));
  const box=el('section',undefined,'debug-box');const label=el('label',report.auto_values?'自动采集位置':'复现断点');label.htmlFor='frame';box.append(label);const controls=el('div',undefined,'controls'),select=el('select');select.id='frame';select.append(new Option(report.auto_values?'在实际内存错误处暂停并提取变量':'自动选择错误栈中的工程源码位置',''));select.disabled=!!report.auto_values;
  e.stacks.forEach((s,si)=>s.frames.forEach((f,fi)=>{if((f.file&&Number(f.line)>0)||f.fn)select.append(new Option(si+':'+fi+' · '+position(f)+' · '+(f.fn||''),si+':'+fi))}));
