@@ -400,6 +400,13 @@ class CaptureTests(unittest.TestCase):
         frame['source_line'] = read_line(str(source), 1)
         self.assertEqual(self.scope['line_variable_states'](frame), [])
 
+    def test_line_matching_distinguishes_members_from_locals(self):
+        frame = {'index': 0, 'source_line': {'identifiers': 'return value + ptr -> length + ns::count + item . used;'},
+                 'variables': [{'name': name, 'initialization': {'status': 'undefined'}}
+                               for name in ['value', 'length', 'count', 'used', 'val']]}
+        rows = self.scope['line_variable_states'](frame)
+        self.assertEqual([row['name'] for row in rows], ['value'])
+
     def test_same_line_analysis_saved_to_all_formats(self):
         source = self.root / 'demo.c'
         source.write_text('if (i + gone) {}', encoding='utf-8')

@@ -212,6 +212,8 @@ def capture_source_line(filename, line):
 
 def line_variable_states(frame):
     source = frame.get('source_line', {}).get('identifiers', '')
+    tokens = lambda text: re.findall(r'[A-Za-z_$][\w$]*|\d+|->|::|[^\s]', text)
+    source_tokens = tokens(source)
     rows = []
     for variable in frame.get('variables', []):
         info = variable['initialization']
@@ -219,8 +221,10 @@ def line_variable_states(frame):
         for member in members:
             suffix = member['name']
             name = variable['name'] if suffix == '$self' else variable['name'] + ('' if suffix.startswith('[') else '.') + suffix
-            pattern = re.escape(name).replace(r'\.', r'\s*\.\s*').replace(r'\[', r'\s*\[\s*').replace(r'\]', r'\s*\]')
-            if source and re.search(r'(?<![\w.])' + pattern + r'(?!\w)', source):
+            name_tokens = tokens(name)
+            if name_tokens and any(source_tokens[i:i + len(name_tokens)] == name_tokens
+                                   and (i == 0 or source_tokens[i - 1] not in ('.', '->', '::'))
+                                   for i in range(len(source_tokens))):
                 rows.append({'frame': frame['index'], 'name': name, 'status': member['status'],
                              'variable_status': info['status'], 'complete': info.get('complete', False),
                              'evidence': '仅源码同一行出现；未确认实际读取或因果关系'})

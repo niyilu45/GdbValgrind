@@ -8,6 +8,7 @@ import json
 import re
 import hashlib
 import uuid
+from html.parser import HTMLParser
 from .capture_updates import SCRIPT as CAPTURE_UPDATES
 
 from . import core
@@ -179,6 +180,40 @@ def save_combined_report(report, directory, *, base_html=None, previous=(), live
     refresh_capture_report(directory, base_html=base_html, report=report)
 
 
+def strip_capture_sections(content):
+    """Remove the complete legacy appendix, including nested result sections."""
+    offsets = [0]
+    # HTMLParser counts only newlines, not Unicode line separators in source.
+    for line in content.split('\n'):
+        offsets.append(offsets[-1] + len(line) + 1)
+    class Sections(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=False)
+            self.depth = 0
+            self.start = 0
+            self.spans = []
+        def absolute_position(self):
+            line, column = self.getpos()
+            return offsets[line-1] + column
+        def handle_starttag(self, tag, attrs):
+            if tag == 'section':
+                if self.depth:
+                    self.depth += 1
+                elif dict(attrs).get('id') == 'capture-results':
+                    self.start = self.absolute_position()
+                    self.depth = 1
+        def handle_endtag(self, tag):
+            if tag == 'section' and self.depth:
+                self.depth -= 1
+                if not self.depth:
+                    self.spans.append((self.start, content.index('>', self.absolute_position()) + 1))
+    parser = Sections()
+    parser.feed(content)
+    for start, end in reversed(parser.spans):
+        content = content[:start] + content[end:]
+    return content
+
+
 def refresh_capture_report(directory, *, base_html=None, report=None):
     """Upgrade the viewer without rerunning the target or rewriting captured values."""
     directory = Path(directory).resolve()
@@ -196,7 +231,8 @@ def refresh_capture_report(directory, *, base_html=None, report=None):
         content = core.render_html(report, source_base=None)
     else:
         content = (directory / 'report.html').read_text(encoding='utf-8')
-    if 'aiv-stack-captures-v15' in content:
+    viewer_versions = re.findall(r'// aiv-stack-captures-v\d+', content)
+    if viewer_versions == ['// aiv-stack-captures-v17']:
         return
     from .templates import SOURCE_VIEW_STYLE, STACK_SCROLL_FUNCTION, SELECT_ERROR_FUNCTION, FILTER_STATE_SCRIPT
     if 'id="report-data"' in content:
@@ -212,7 +248,13 @@ def refresh_capture_report(directory, *, base_html=None, report=None):
             content = content.replace('d.dataset.frameKey=frameKey;',
                                       "d.dataset.frameKey=frameKey;d.dataset.hasSource=f.source?'yes':'no';")
         content = content.replace('</head>', '<style>' + SOURCE_VIEW_STYLE + '</style></head>', 1)
-    content = re.sub(r'<section id="capture-results".*?</section>\s*(?:<script>.*?</script>)?', '', content, flags=re.S)
+    # Some older reports nest sections inside capture-results. Removing that
+    # section up to the first closing tag can leave its old script alive.
+    # Remove capture scripts independently so only one closure can paint frames.
+    content = re.sub(r'<script\b[^>]*>(.*?)</script>',
+                     lambda match: '' if re.search(r'// aiv-stack-captures-v\d+', match.group(1)) else match.group(0),
+                     content, flags=re.S)
+    content = strip_capture_sections(content)
     content = content.replace('<a href="#capture-results">查看步骤三变量现场</a>', '')
     viewer = CAPTURE_UPDATES.replace('__CAPTURE_REPORT_KEY__', report_key(content))
     appendix = '<section id="capture-results" style="padding:24px"><h2>步骤三变量状态</h2><p>变量显示在对应错误的主调用栈帧下方。</p><p id="capture-status">正在读取变量数据…</p></section>' + viewer

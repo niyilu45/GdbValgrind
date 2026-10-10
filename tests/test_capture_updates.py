@@ -148,6 +148,33 @@ assert(frame.textContent.includes('实际值：5'));assert(!frame.textContent.in
 assert(!parentFrame.textContent.includes('parentB'));
 selected='bad';frame.children=[];parentFrame.children=[];detail(report.errors[1]);
 assert(frame.textContent.includes('session-B/error-1'));assert(parentFrame.textContent.includes('parentB'));
+// Keywords/whitespace must not hide locals; members must not impersonate locals.
+function lineSummary(source, variables, levels=[]){
+ const sample=runtime('bad.c');sample.frames[1].source_line={text:source,identifiers:source};
+ sample.frames[1].variables=variables;sample.frames[1].index_analysis={levels};
+ frame.children=[];parentFrame.children=[];
+ window.aivCaptureUpdate({live:false,replay_id:source,items:[{snapshot:sample}]});
+ const p=frame.children[0];return p.children.filter(n=>n.tag!=='details'&&!n.dataset?.captureAllVariables).map(n=>n.textContent).join('');
+}
+const scalar=(name,value)=>({name,value,status:'available',initialization:{status:'undefined'}});
+let lineText=lineSummary('return value;', [scalar('value','731')]);
+assert(lineText.includes('实际值：731'));assert(lineText.includes('value：未初始化'));
+lineText=lineSummary('int value = ptr -> length + ns::count;', [scalar('value','732'),scalar('length','WRONG_LENGTH'),scalar('count','WRONG_COUNT')]);
+assert(lineText.includes('实际值：732'));assert(!lineText.includes('WRONG_LENGTH'));assert(!lineText.includes('WRONG_COUNT'));
+assert(!lineText.includes('length：未初始化'));assert(!lineText.includes('count：未初始化'));
+lineText=lineSummary('return longer[index];', [scalar('index','733'),scalar('long','WRONG_PREFIX')]);
+assert(lineText.includes('实际值：733'));assert(!lineText.includes('WRONG_PREFIX'));
+lineText=lineSummary('return table [ 1 ].length;', [{name:'table',status:'available',member_details:{members:[
+ {name:'[1].length',value:'734',status:'available',initialization:'undefined'},
+ {name:'[10].length',value:'WRONG_ELEMENT',status:'available',initialization:'undefined'}]}}]);
+assert(lineText.includes('table[1].length = 734'));assert(!lineText.includes('WRONG_ELEMENT'));
+lineText=lineSummary('return item.used;', [{name:'item',status:'available',initialization:{status:'partially_undefined',member_states:[
+ {name:'used',status:'defined'},{name:'unrelated',status:'undefined'}]}}]);
+assert(lineText.includes('item.used'));assert(!lineText.includes('item.unrelated'));
+lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status:'out_of_bounds',actual_index:99,bounds:[0,2]}]);
+assert(!lineText.includes('table[i]：索引越界'));
+frame.children=[];parentFrame.children=[];
+window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // Changed source text disables line-level claims instead of guessing.
 report.errors[1].stacks[0].frames[1].source=[{number:10,text:'different_statement();'}];
 frame.children=[];detail(report.errors[1]);

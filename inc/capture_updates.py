@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v15
+// aiv-stack-captures-v17
 (()=>{
  let running=true,timer,activeReplay=null;const captures=new Map();
  const status=document.getElementById('capture-status');
@@ -93,18 +93,22 @@ SCRIPT = r'''
    const capturedLine=frame.source_line?.text;
    const sourceChanged=typeof shownLine==='string'&&typeof capturedLine==='string'&&shownLine.trim()!==capturedLine.trim();
    const identifiers=!sourceChanged&&typeof frame.source_line?.identifiers==='string'?frame.source_line.identifiers:'';
-   const code=identifiers.replace(/\/\*.*?\*\/|\/\/.*$|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g,' ').replace(/\s+/g,'');
-   const onLine=name=>{const escaped=String(name).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');return !!code&&new RegExp('(?<![\\w$.])'+escaped+'(?![\\w$])').test(code)};
+   // Preserve token boundaries: `return value` must not become `returnvalue`.
+   // A member `ptr->value` is not the unrelated local variable `value`.
+   const tokens=s=>String(s).match(/[A-Za-z_$][\w$]*|\d+|->|::|[^\s]/g)||[];
+   const code=tokens(identifiers.replace(/\/\*.*?\*\/|\/\/.*$|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g,' '));
+   const onLine=name=>{const needle=tokens(name);return needle.length>0&&code.some((_,i)=>!['.','->','::'].includes(code[i-1])&&needle.every((t,j)=>code[i+j]===t))};
    add('p',sourceChanged?'报告源码与步骤三采集时的源码行不同，无法确认本行变量关系；下方仅保留该函数作用域的现场值。':identifiers?'采集包含整个函数作用域；下方只将源码本行出现的变量列为本行相关项。文本出现不证明实际读取或导致错误。':'此现场没有可核对的源码行，无法判断哪些变量属于报错行；请展开作用域变量查看。').className='meta';
    if(capturedLine)add('pre','采集时源码：'+capturedLine).style.cssText='white-space:pre-wrap;overflow-wrap:anywhere';
    add('h4','本行源码中出现的变量');
    const relevant=add('pre','');relevant.className='source';relevant.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;padding:12px';let relatedCount=0;
    for(const v of frame.variables||[]){
     if(!onLine(v.name))continue;
-    const members=v.member_details?.members;
+    const details=v.member_details;
+    const members=details?.members||v.initialization?.member_states?.filter(m=>m.name!=='$self');
     if(members){
      let memberCount=0;
-     for(const m of members){const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;if(!onLine(name))continue;const row=add('span',name+' = '+m.value+'；'+(initLabels[m.initialization]||'初始化状态无法确定'),relevant);row.style.display='block';colorState(row,variableState(m.initialization,m.status,v.initialization?.complete));memberCount++;relatedCount++}
+     for(const m of members){const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;if(!onLine(name))continue;const state=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);const row=add('span',name+' = '+(m.value??'旧现场未单独保存成员值')+'；'+(initLabels[state]||'初始化状态无法确定'),relevant);row.style.display='block';colorState(row,variableState(state,details?m.status:undefined,v.initialization?.complete));memberCount++;relatedCount++}
      if(!memberCount){add('span',v.name+'：本行出现此对象，但无法确认具体成员；完整值见下方作用域变量。\n',relevant);relatedCount++}
     }else{for(const row of variableLines(v)){const line=add('span',typeof row==='string'?row:row.text,relevant);line.style.display='block';if(row.state)colorState(line,row.state)}relatedCount++}
    }
@@ -134,7 +138,7 @@ SCRIPT = r'''
     }
     if(!members.length&&!found&&onLine(v.name)&&suspicious(info.observed_status||info.status))warnings.push(v.name+'：'+(initLabels[info.observed_status||info.status]||'需要检查'));
    }
-   for(const level of frame.index_analysis?.levels||[])if(identifiers&&level.status==='out_of_bounds'&&code.includes(level.expression.replace(/\s+/g,'')))warnings.push(level.expression+'：索引越界，实际 '+level.actual_index+'；合法范围 '+(level.bounds?level.bounds.join('～'):'未知'));
+   for(const level of frame.index_analysis?.levels||[])if(level.status==='out_of_bounds'&&onLine(level.expression))warnings.push(level.expression+'：索引越界，实际 '+level.actual_index+'；合法范围 '+(level.bounds?level.bounds.join('～'):'未知'));
    if(warnings.length){
     const ul=add('ul','');for(const warning of [...new Set(warnings)])colorState(add('li',warning,ul),'abnormal');
     add('p','以上是需核查的现场异常，不代表已确认的错误原因。请结合报错行检查赋值与访问过程。').className='meta';
