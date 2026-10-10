@@ -15,7 +15,7 @@ class ReportUITests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             html = Path(directory) / 'report.html'
             html.write_text(render_html(report), encoding='utf-8')
-            result = subprocess.run(['node', str(root / 'tests/paged_ui_test.js'), str(html)], capture_output=True, text=True, timeout=30)
+            result = subprocess.run(['node', str(root / 'tests/paged_ui_test.js'), str(html)], capture_output=True, text=True, encoding="utf-8", timeout=30)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_exported_report_interactions(self):
@@ -25,5 +25,5 @@ class ReportUITests(unittest.TestCase):
             html = Path(directory) / 'report.html'
             html.write_text(render_html(report), encoding='utf-8')
             result = subprocess.run(['node', str(root / 'tests/report_ui_test.js'), str(html)],
-                                    capture_output=True, text=True, timeout=30)
+                                    capture_output=True, text=True, encoding="utf-8", timeout=30)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

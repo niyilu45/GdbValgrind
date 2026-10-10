@@ -94,7 +94,7 @@ class Sources:
         matches = [p for p in matches if p.is_relative_to(self.root)]
         return matches[0] if len(matches) == 1 else None
 
-    def enrich(self, frame):
+    def enrich(self, frame, with_blame=True):
         self.progress('定位源码: ' + str(frame.get('file', '无文件')))
         path = self.resolve(frame)
         if not path:
@@ -114,6 +114,9 @@ class Sources:
                 frame["source_note"] = "XML 行号超出源码范围；请核对代码版本"
                 return
             frame["source"] = [{"number": i + 1, "text": lines[i]} for i in range(max(0, line - 11), min(len(lines), line + 10))]
+            if not with_blame:
+                frame['blame_note'] = '源码已加载，blame 正在后台查询'
+                return
             start, end = frame['source'][0]['number'], frame['source'][-1]['number']
             blame_key = (path, start, end)
             if blame_key not in self.blame_cache:

@@ -26,6 +26,20 @@ class ErrorStore:
             CREATE INDEX enrichment_state ON issues(author_done,seq);
             CREATE INDEX source_pending ON issues(author_done,retry_at,seq) WHERE author_done<2 AND attempts<3;
             CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE rollups(kind TEXT,author TEXT,pending INTEGER,n INTEGER,
+                PRIMARY KEY(kind,author,pending));
+            CREATE TRIGGER issue_added AFTER INSERT ON issues BEGIN
+                INSERT OR IGNORE INTO rollups VALUES(new.kind,new.author,new.author_done=0,0);
+                UPDATE rollups SET n=n+1 WHERE kind=new.kind AND author=new.author AND pending=(new.author_done=0);
+            END;
+            CREATE TRIGGER issue_group_changed AFTER UPDATE OF kind,author,author_done ON issues
+            WHEN old.kind!=new.kind OR old.author!=new.author OR (old.author_done=0)!=(new.author_done=0)
+            BEGIN
+                UPDATE rollups SET n=n-1 WHERE kind=old.kind AND author=old.author AND pending=(old.author_done=0);
+                DELETE FROM rollups WHERE n=0;
+                INSERT OR IGNORE INTO rollups VALUES(new.kind,new.author,new.author_done=0,0);
+                UPDATE rollups SET n=n+1 WHERE kind=new.kind AND author=new.author AND pending=(new.author_done=0);
+            END;
         ''')
         self.kinds = {}
         self.revision = 0

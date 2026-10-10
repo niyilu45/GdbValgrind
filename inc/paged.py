@@ -44,15 +44,23 @@ class PagedHandler(Handler):
                         clauses.append('author=?')
                         params.append('' if value('author') == 'missing' else value('author')[7:])
                     base = ' AND '.join(clauses) or '1'
-                    kinds = {r['kind']:r['n'] for r in db.execute('SELECT kind,count(*) n FROM issues WHERE '+base+' GROUP BY kind',params)}
-                    totals = {r['kind']:r['n'] for r in db.execute('SELECT kind,count(*) n FROM issues GROUP BY kind')}
+                    groups = list(db.execute('SELECT kind,author,pending,n FROM rollups'))
+                    totals, kinds, author_counts, pending = {}, {}, {}, 0
+                    for group in groups:
+                        k, author, n = group['kind'], group['author'], group['n']
+                        totals[k] = totals.get(k,0)+n
+                        author_counts[author] = author_counts.get(author,0)+(0 if k=='Leak_StillReachable' else n)
+                        pending += group['pending']*n
+                        if not value('author') or author == ('' if value('author')=='missing' else value('author')[7:]):
+                            kinds[k] = kinds.get(k,0)+n
+                    if value('q') or value('file'):
+                        kinds = {r['kind']:r['n'] for r in db.execute('SELECT kind,count(*) n FROM issues WHERE '+base+' GROUP BY kind',params)}
                     if value('kind'):
                         clauses.append('kind=?'); params.append(value('kind'))
                     where = ' AND '.join(clauses) or '1'
-                    total = db.execute('SELECT count(*) FROM issues WHERE '+where,params).fetchone()[0]
+                    total = kinds.get(value('kind'),0) if value('kind') else sum(kinds.values())
                     rows = [dict(r) for r in db.execute('SELECT id,kind,what,count,seq FROM issues WHERE '+where+' ORDER BY seq LIMIT 100 OFFSET ?', params+[offset])]
-                    authors = [dict(r) for r in db.execute("SELECT author,sum(CASE WHEN kind='Leak_StillReachable' THEN 0 ELSE 1 END) n FROM issues GROUP BY author ORDER BY n DESC,author")]
-                    pending = db.execute('SELECT count(*) FROM issues WHERE author_done=0').fetchone()[0]
+                    authors = [{'author':a,'n':n} for a,n in sorted(author_counts.items(),key=lambda p:(-p[1],p[0]))]
                     status = db.execute("SELECT value FROM metadata WHERE key='status'").fetchone()
                     return self.reply(200, {'errors': rows, 'total':total,'kinds':kinds,'totals':totals,'authors':authors,'pending':pending,'status':json.loads(status[0]) if status else {},'worker_error':owner.report.get('source_worker_error','')})
                 if path.path == '/api/issue':
@@ -100,7 +108,20 @@ class PagedReport:
             raise SourceCancelled()
 
     def enrich(self):
+        while not self.stop.is_set():
+            try:
+                self._enrich_pass()
+                return
+            except sqlite3.OperationalError as exc:
+                if 'locked' not in str(exc).lower() and 'busy' not in str(exc).lower():
+                    self.report['source_worker_error'] = str(exc)
+                    return
+                self.stop.wait(0.2)
+
+    def _enrich_pass(self):
+        identity = None
         try:
+            sources = Sources(self.report.get('project'), progress=self.checkpoint)
             with connect(self.path) as db:
                 while not self.stop.is_set():
                     if not self.report.get('project'):
@@ -121,8 +142,22 @@ class PagedReport:
                     if row is None:
                         self.stop.wait(0.2); continue
                     item = issue_data(row)
-                    sources = Sources(self.report.get('project'), progress=self.checkpoint)
+                    # Reuse the directory index across errors; bound full-file caches.
+                    sources.files = {}
+                    sources.blame_cache.clear()
+                    if len(sources.cache) > 32:
+                        sources.cache.clear()
+                    if len(sources.resolved) > 8192:
+                        sources.resolved.clear()
                     frames = [f for s in item['stacks'] for f in s['frames']] if identity else (item['stacks'][0]['frames'][:1] if item['stacks'] else [])
+                    # Publish code before slow attribution queries finish.
+                    for frame in frames:
+                        self.checkpoint()
+                        sources.enrich(frame, with_blame=False)
+                    with self.files_lock:
+                        self.source_files.update(sources.files)
+                    db.execute('UPDATE issues SET enriched=? WHERE id=?', (json.dumps(item,ensure_ascii=False),row['id']))
+                    db.commit()
                     for frame in frames:
                         self.checkpoint()
                         sources.enrich(frame)
@@ -139,6 +174,12 @@ class PagedReport:
                             self.pending.discard(identity)
         except SourceCancelled:
             pass
+        except sqlite3.OperationalError:
+            if identity:
+                with self.pending_lock:
+                    self.pending.discard(identity)
+                self.request(identity)
+            raise
         except Exception as exc:
             self.report['source_worker_error'] = str(exc)
 
