@@ -370,6 +370,7 @@ class AutoValueCapture:
                     row['line'] = sal.line
                     row['source_line'] = capture_source_line(row['file'], sal.line)
                     row['variables'], row['note'] = capture_variables(frame, initialization_budget)
+                    row['index_analysis'] = nested_index_analysis(frame, row['source_line'])
                 except Exception as exc:
                     if disconnected(str(exc)):
                         raise CaptureDisconnected(str(exc))
@@ -413,6 +414,8 @@ class AutoValueCapture:
                 lines.append('\n#%s %s %s:%s' % (row['index'], row.get('function', ''), row.get('file', ''), row.get('line', '')))
                 if row.get('source_line'):
                     lines.append('  源码：' + row['source_line']['text'])
+                if row.get('index_analysis', {}).get('levels'):
+                    lines.append('  嵌套索引分析：' + json.dumps(row['index_analysis'], ensure_ascii=False))
                 for variable in row.get('variables', []):
                     lines.append('  %s %s (%s) = %s [%s]' % (variable['role'], variable['name'], variable.get('type', ''), variable['value'], variable['status']))
                     lines.append('    初始化状态：' + initialization_summary(variable['initialization']))
@@ -477,3 +480,6 @@ class AutoValueCapture:
 _aivalgrind_capture = AutoValueCapture()
 gdb.write('[AiValgrind] 自动变量采集已启用。\n')
 '''
+
+from .index_analysis import INDEX_ANALYSIS_SCRIPT
+GDB_CAPTURE_SCRIPT += INDEX_ANALYSIS_SCRIPT

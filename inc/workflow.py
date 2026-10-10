@@ -155,7 +155,7 @@ def save_combined_report(report, directory, *, base_html=None, previous=(), live
     update_file.replace(directory / 'capture-updates.js')
     output = directory / 'full-report.html'
     content = output.read_text(encoding='utf-8') if output.exists() else (base_html or core.render_html(report, source_base=None))
-    if 'aiv-stack-captures-v3' in content:
+    if 'aiv-stack-captures-v4' in content:
         return
     content = re.sub(r'<section id="capture-results".*?</section>\s*(?:<script>.*?</script>)?', '', content, flags=re.S)
     content = content.replace('<a href="#capture-results">查看步骤三变量现场</a>', '')

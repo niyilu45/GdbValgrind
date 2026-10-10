@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v3
+// aiv-stack-captures-v4
 (()=>{
  let running=true,timer;const captures=new Map();
  const status=document.getElementById('capture-status');
@@ -38,6 +38,14 @@ SCRIPT = r'''
     lines.push(memory.range_explanation||'当前诊断未提供足够的内存块边界，无法确定合法访问范围。');
    }
    for(const v of frame.variables||[])lines.push(v.name+' = '+v.value+(v.initialization?'\n初始化信息：'+JSON.stringify(v.initialization):''));
+   if(frame.index_analysis?.levels?.length){
+    lines.push('嵌套索引逐级分析（源码现场推导）');
+    for(const level of frame.index_analysis.levels){
+     const bounds=level.bounds?level.bounds.join('～'):'未知';
+     lines.push(level.expression+'：实际索引 '+(level.actual_index??'未知')+'；合法范围 '+bounds+'；'+({in_bounds:'该级未越界',out_of_bounds:'该级越界',unknown:'无法判断'}[level.status]||level.status)+(level.note?'（'+level.note+'）':''));
+    }
+    lines.push(frame.index_analysis.note);
+   }
    if(!(frame.variables||[]).length)lines.push(frame.note||'此帧没有可读取的变量');
    const text=lines.join('\n');if(panel.textContent!==text)panel.textContent=text;
   }
