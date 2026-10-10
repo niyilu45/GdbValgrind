@@ -141,6 +141,11 @@ assert.equal(authorSelect.children[0].textContent,'全部作者 (4)','reachable 
 assert.equal(authorSelect.children.find(n=>n.value==='author:Alice').textContent,'Alice (1)');
 assert.equal(authorSelect.children.find(n=>n.value==='author:ReachableOnly').textContent,'ReachableOnly (0)');
 assert.equal(authorSelect.children[1].value,'author:Bob','reachable issues do not affect ranking');
+authors.run("kind='Leak_StillReachable';list()");
+assert.equal(authorSelect.children[0].textContent,'全部作者 (0)','type selection updates author counts');
+assert.equal(authorSelect.children.find(n=>n.value==='author:Alice').textContent,'Alice (0)');
+authors.run("kind='';list()");
+assert.equal(authorSelect.children[0].textContent,'全部作者 (4)','clearing type restores author counts');
 authorSelect.value='author:ReachableOnly';authorSelect.onchange();
 assert.equal(authors.run('filtered[0].e.id'),'reachable-only','reachable issues remain filterable');
 assert.equal(blameUI.ids.get('showBlame').checked,true);

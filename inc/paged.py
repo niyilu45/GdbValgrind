@@ -51,7 +51,8 @@ class PagedHandler(Handler):
                     for group in groups:
                         k, author, n = group['kind'], group['author'], group['n']
                         totals[k] = totals.get(k,0)+n
-                        author_counts[author] = author_counts.get(author,0)+(0 if k=='Leak_StillReachable' else n)
+                        if not value('kind') or k == value('kind'):
+                            author_counts[author] = author_counts.get(author,0)+(0 if k=='Leak_StillReachable' else n)
                         pending += group['pending']*n
                         if not value('author') or author == ('' if value('author')=='missing' else value('author')[7:]):
                             kinds[k] = kinds.get(k,0)+n
@@ -60,7 +61,8 @@ class PagedHandler(Handler):
                         for group in db.execute('SELECT kind,author,count(*) n FROM issues WHERE '
                                                 +author_where+' GROUP BY kind,author', author_params):
                             k, author, n = group['kind'], group['author'], group['n']
-                            author_counts[author] = author_counts.get(author,0)+(0 if k=='Leak_StillReachable' else n)
+                            if not value('kind') or k == value('kind'):
+                                author_counts[author] = author_counts.get(author,0)+(0 if k=='Leak_StillReachable' else n)
                             if not value('author') or author == ('' if value('author')=='missing' else value('author')[7:]):
                                 kinds[k] = kinds.get(k,0)+n
                     if value('kind'):

@@ -38,6 +38,7 @@ class BlameTests(unittest.TestCase):
             self.assertEqual(run.call_count, 1)
             args = run.call_args.args[0]
             self.assertEqual(args[args.index('-L') + 1], '1,2')
+            self.assertEqual(run.call_args.kwargs['timeout'], 30)
 
     def test_multiple_ranges_merge_without_querying_gaps(self):
         with patch('inc.blame.shutil.which', return_value='/git'), patch('inc.blame.run_git',

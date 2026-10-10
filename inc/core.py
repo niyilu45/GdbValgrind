@@ -135,7 +135,7 @@ class Sources:
                         checkpoint=lambda: self.progress('等待文件 blame: ' + str(path)))
                 self.blame_cache[blame_key] = self.blame_cache[batch_key]
             if blame_key not in self.blame_cache:
-                self.progress('查询 git blame（单次最多 5 秒）: %s:%s-%s' % (path, start, end))
+                self.progress('查询 git blame（单次最多 30 秒）: %s:%s-%s' % (path, start, end))
                 self.blame_cache[blame_key] = source_blame(path, start, end,
                     checkpoint=lambda: self.progress('等待 git blame（q 可退出）: %s:%s-%s' % (path, start, end)))
                 self.progress('已完成 git blame: %s:%s-%s' % (path, start, end))

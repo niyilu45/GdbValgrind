@@ -137,6 +137,10 @@ class PagedTests(unittest.TestCase):
                                  [{'author':'Alice','n':1},{'author':'Bob','n':1}])
                 store.accept(ET.fromstring(error('new',kind='InvalidRead')));store.commit()
                 self.assertEqual(get('/api/issues?kind=InvalidRead')['total'],1)
+                self.assertEqual(get('/api/issues?kind=InvalidRead')['authors'], [{'author':'','n':1}])
+                self.assertEqual(get('/api/issues?file=selected.c&kind=InvalidRead')['authors'], [])
+                self.assertEqual(get('/api/issues?file=selected.c&kind=Leak_StillReachable')['authors'],
+                                 [{'author':'Alice','n':0}])
                 detail=get('/api/issue?id='+data['errors'][0]['id'])
                 self.assertFalse(detail['ready'])
                 self.assertTrue(detail['report']['errors'][0]['stacks'])

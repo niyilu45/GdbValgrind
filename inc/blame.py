@@ -15,7 +15,7 @@ class BlameRows(dict):
         self.note = note
 
 
-def source_blame(path, start, end, timeout=5, checkpoint=None, ranges=None):
+def source_blame(path, start, end, timeout=30, checkpoint=None, ranges=None):
     merged = []
     for first, last in sorted(ranges or [(start,end)]):
         if merged and first <= merged[-1][1] + 1:
