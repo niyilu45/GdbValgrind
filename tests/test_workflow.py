@@ -9,6 +9,26 @@ from tests.test_aivalgrind import error
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_older_workflow_does_not_break_cli_import(self):
+        import importlib
+        import io
+        from inc import cli
+        refresh = workflow.refresh_capture_report
+        try:
+            del workflow.refresh_capture_report
+            importlib.reload(cli)
+            with patch('sys.stdout', new_callable=io.StringIO):
+                with self.assertRaises(SystemExit) as result:
+                    cli.main(['--help'])
+            self.assertEqual(result.exception.code, 0)
+            with patch('sys.stderr', new_callable=io.StringIO) as stderr:
+                self.assertEqual(cli.main(['refresh-captures', '--output-dir', '.']), 2)
+            self.assertIn(str(workflow.__file__), stderr.getvalue())
+            self.assertIn('refresh_capture_report', stderr.getvalue())
+            self.assertNotIn('Traceback', stderr.getvalue())
+        finally:
+            workflow.refresh_capture_report = refresh
+
     def test_refresh_upgrades_viewer_without_changing_captured_data(self):
         from inc.cli import main
         with tempfile.TemporaryDirectory() as root:

@@ -6,7 +6,8 @@ import subprocess
 import sys
 from .core import load_report, render_html, serve, run_debug, save_report
 from .collect import collect_run, print_summary, summary_data
-from .workflow import analyze_run, refresh_capture_report
+from .workflow import analyze_run
+from . import workflow
 from .versions import print_tool_versions
 
 def main(argv=None):
@@ -65,7 +66,11 @@ def main(argv=None):
     args.command = command
     try:
         if args.action == 'refresh-captures':
-            refresh_capture_report(args.output_dir)
+            refresh_report = getattr(workflow, 'refresh_capture_report', None)
+            if not callable(refresh_report):
+                raise ValueError('脚本文件版本不一致：当前加载的 ' + str(workflow.__file__) +
+                                 ' 缺少 refresh_capture_report。请将项目根目录脚本及整个 inc 目录更新到同一版本后重试；无需安装额外库。')
+            refresh_report(args.output_dir)
             print('已更新变量查看功能，请重新打开：' + str(args.output_dir.resolve() / 'full-report.html'))
             return 0
         runtime_info = print_tool_versions(args.action, debug_enabled=args.action == 'serve' and bool(command))
