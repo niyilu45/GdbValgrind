@@ -177,7 +177,7 @@ class PagedReport:
                     sources.files = {}
                     sources.blame_cache.clear()
                     if len(sources.cache) > 32:
-                        sources.cache.clear()
+                        sources.cache.clear(); sources.cache_stamps.clear()
                     if len(sources.resolved) > 8192:
                         sources.resolved.clear()
                     frames = [f for s in item['stacks'] for f in s['frames']] if identity else (item['stacks'][0]['frames'][:1] if item['stacks'] else [])

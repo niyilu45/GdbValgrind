@@ -66,13 +66,13 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
             database=directory/'results.sqlite3'
             if database.is_file():
                 progress('读取 SQLite 复现位置')
-                report=load_replay(database,source,progress)
+                report=load_replay(database,source,progress,include_enriched=True)
             else:
                 report=core.load_report(source,progress=progress)
     report['project'] = str(Path(project_dir).resolve()) if project_dir else ''
     with ReportProgress('步骤 2/3：生成完整 HTML') as progress:
         if project_dir:
-            core.enrich_parallel(report, project_dir, workers=4, progress=progress)
+            core.enrich_parallel(report, project_dir, workers=4, progress=progress,reuse=True)
         progress('序列化并写入 HTML')
         temporary = directory / 'report.html.tmp'
         core.save_report(report, temporary)

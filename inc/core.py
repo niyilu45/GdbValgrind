@@ -60,6 +60,7 @@ class Sources:
         self.root = Path(root).resolve() if root else None
         self.index = None
         self.cache = {}
+        self.cache_stamps = {}
         self.blame_cache = {}
         self.files = {}
         self.resolved = {}
@@ -106,7 +107,9 @@ class Sources:
         try:
             if path not in self.cache:
                 self.progress('读取源码: ' + str(path))
+                stat = path.stat()
                 self.cache[path] = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                self.cache_stamps[path] = [stat.st_mtime_ns, stat.st_size]
             lines = self.cache[path]
             key = hashlib.sha256(str(path).encode('utf-8')).hexdigest()[:16]
             self.files[key] = {'path': str(path)}
@@ -116,6 +119,8 @@ class Sources:
                 frame["source_note"] = "XML 行号超出源码范围；请核对代码版本"
                 return
             frame["source"] = [{"number": i + 1, "text": lines[i]} for i in range(max(0, line - 11), min(len(lines), line + 10))]
+            frame['_source_stamp'] = self.cache_stamps[path]
+            frame['_blame_complete'] = False
             if not with_blame:
                 frame['blame_note'] = '源码已加载，blame 正在后台查询'
                 return
@@ -132,6 +137,7 @@ class Sources:
                 if blame and blame.get('text') == row['text']:
                     row['blame'] = {k: v for k, v in blame.items() if k != 'text'}
             found = sum('blame' in row for row in frame['source'])
+            frame['_blame_complete'] = bool(found)
             frame['blame_note'] = 'blame: %d/%d 行' % (found, len(frame['source']))
             if found < len(frame['source']):
                 frame['blame_note'] += '；' + getattr(attribution, 'note', '部分行未返回或源码与 Git 查询结果不一致')
@@ -173,12 +179,58 @@ def load_report(xml_path, project=None, allow_partial=True, *, workers=1, progre
     return report
 
 
-def enrich_parallel(report, project, workers, progress=None):
+def enrich_parallel(report, project, workers, progress=None, reuse=False):
     """Bounded in-flight jobs; worker-local source caches, cancellable Git queries."""
     root = Path(project).resolve()
     if not root.is_dir():
         raise ValueError('工程目录不存在: ' + str(root))
     frames = [f for e in report['errors'] for s in e['stacks'] for f in s['frames']]
+    total_frames = len(frames)
+    groups = {}
+    for frame in frames:
+        key = (source_identity(frame.get('dir',''), frame.get('file','')), integer(frame.get('line')))
+        groups.setdefault(key, []).append(frame)
+    # Function names and instruction addresses remain specific to each frame;
+    # only source enrichment is shared between identical source positions.
+    fields = ('source', 'source_note', 'source_file_id', 'local_file', 'blame_note',
+              '_source_stamp', '_blame_complete')
+    siblings = {}
+    frames = []
+    for group in groups.values():
+        representative = next((f for f in group if f.get('_blame_complete')), group[0])
+        frames.append(representative)
+        siblings[id(representative)] = group
+    def share(frame):
+        for other in siblings[id(frame)]:
+            if other is frame:
+                continue
+            for field in fields:
+                if field in frame:
+                    other[field] = frame[field]
+                else:
+                    other.pop(field, None)
+    unique_frames = len(frames)
+    reused = 0
+    if reuse:
+        pending_frames = []
+        for frame in frames:
+            valid = False
+            try:
+                path = Path(frame.get('local_file', '')).resolve()
+                if frame.get('source') and frame.get('_blame_complete') and frame.get('source_file_id') and path.is_relative_to(root):
+                    stat = path.stat()
+                    valid = frame.get('_source_stamp') == [stat.st_mtime_ns, stat.st_size]
+            except OSError:
+                pass
+            if valid:
+                report['source_files'][frame['source_file_id']] = {'path':str(path)}
+                share(frame)
+                reused += 1
+            else:
+                pending_frames.append(frame)
+        frames = pending_frames
+        if progress:
+            progress('复用步骤一源码与 blame | %d 帧已完成，%d 帧待处理' % (reused,len(frames)))
     stop, local = threading.Event(), threading.local()
     def checkpoint(text):
         if stop.is_set():
@@ -188,11 +240,12 @@ def enrich_parallel(report, project, workers, progress=None):
             local.sources=Sources(root, progress=checkpoint)
         sources=local.sources
         if len(sources.cache)>32:
-            sources.cache.clear()
+            sources.cache.clear(); sources.cache_stamps.clear()
         checkpoint('')
         sources.enrich(frame)
+        share(frame)
         key=frame.get('source_file_id')
-        return (key,sources.files[key]) if key else None
+        return (key,sources.files[key]) if key in sources.files else None
     executor=ThreadPoolExecutor(max_workers=workers,thread_name_prefix='aivalgrind-report-source')
     pending=set(); iterator=iter(frames); done_count=0
     try:
@@ -200,7 +253,7 @@ def enrich_parallel(report, project, workers, progress=None):
             pending.add(executor.submit(enrich,next(iterator)))
         while pending:
             if progress:
-                progress('源码与 blame（%d 线程） | %d / %d 帧' % (workers,done_count,len(frames)))
+                progress('源码与 blame（%d 线程） | %d / %d 帧位置 | 累计 %d 帧，独立 %d，复用 %d' % (workers,done_count,len(frames),total_frames,unique_frames,reused))
             completed,pending=wait(pending,timeout=0.1,return_when=FIRST_COMPLETED)
             for future in completed:
                 result=future.result()
@@ -212,7 +265,7 @@ def enrich_parallel(report, project, workers, progress=None):
                     pending.add(executor.submit(enrich,frame))
         report['project']=str(root)
         if progress:
-            progress('源码与 blame（%d 线程） | %d / %d 帧' % (workers,done_count,len(frames)))
+            progress('源码与 blame（%d 线程） | %d / %d 帧位置 | 累计 %d 帧，独立 %d，复用 %d' % (workers,done_count,len(frames),total_frames,unique_frames,reused))
     finally:
         stop.set()
         executor.shutdown(wait=True,cancel_futures=True)

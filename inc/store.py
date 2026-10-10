@@ -130,7 +130,7 @@ def issue_data(row):
     return item
 
 
-def load_replay(path, xml_path, progress=None):
+def load_replay(path, xml_path, progress=None, *, include_enriched=False):
     """Reuse the just-collected database without reading XML or source snippets."""
     from .commands import command_metadata
     root=ET.Element('valgrindoutput')
@@ -139,7 +139,8 @@ def load_replay(path, xml_path, progress=None):
         status_row=db.execute("SELECT value FROM metadata WHERE key='status'").fetchone()
         status=json.loads(status_row[0]) if status_row else {}
         total=status.get('locations',0)
-        cursor=db.execute('SELECT payload,NULL AS enriched,count,records,bytes,blocks FROM issues ORDER BY seq')
+        cursor=db.execute('SELECT payload,'+('enriched' if include_enriched else 'NULL AS enriched')+
+                          ',count,records,bytes,blocks FROM issues ORDER BY seq')
         for row in cursor:
             report['errors'].append(issue_data(row))
             if progress and len(report['errors'])%100==0:
