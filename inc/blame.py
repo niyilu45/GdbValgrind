@@ -8,14 +8,14 @@ import time
 _cache = {}
 
 
-def source_blame(path, start, end, timeout=2):
+def source_blame(path, start, end, timeout=5):
     try:
         stat = path.stat()
-        key = (str(path), stat.st_mtime_ns, stat.st_size, start, end)
+        key = (str(path), stat.st_mtime_ns, stat.st_size)
         now = time.monotonic()
         cached = _cache.get(key)
-        if cached and now - cached[0] < 10:
-            return cached[1]
+        if cached and now - cached[0] < 60 and all(n in cached[1] for n in range(start, end + 1)):
+            return {n: row for n, row in cached[1].items() if start <= n <= end}
         git = shutil.which('git')
         if not git:
             return {}
@@ -41,9 +41,14 @@ def source_blame(path, start, end, timeout=2):
                     current['date'] = datetime.fromtimestamp(int(line[12:]), timezone.utc).strftime('%Y-%m-%d')
                 elif line.startswith('summary '):
                     current['summary'] = line[8:]
-        if len(_cache) >= 128:
-            _cache.clear()
-        _cache[key] = (now, rows)
-        return rows
+        if rows:
+            if cached and now - cached[0] < 60:
+                rows = {**cached[1], **rows}
+            if len(_cache) >= 128:
+                del _cache[next(iter(_cache))]
+            # Keep the original expiry when extending a cached file, so old
+            # lines do not remain stale indefinitely under frequent queries.
+            _cache[key] = (cached[0] if cached and now - cached[0] < 60 else time.monotonic(), rows)
+        return {n: row for n, row in rows.items() if start <= n <= end}
     except (OSError, ValueError, OverflowError, subprocess.SubprocessError):
         return {}

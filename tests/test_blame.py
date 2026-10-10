@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 from inc.blame import source_blame, _cache
+from inc.core import Sources
 
 
 class BlameTests(unittest.TestCase):
@@ -33,3 +34,35 @@ class BlameTests(unittest.TestCase):
             self.assertEqual(result[2]['commit'], '')
             self.assertEqual(source_blame(self.path, 1, 2), result)
             self.assertEqual(run.call_count, 1)
+            self.assertEqual(source_blame(self.path, 2, 2), {2: result[2]})
+            self.assertEqual(run.call_count, 1)
+            args = run.call_args.args[0]
+            self.assertEqual(args[args.index('-L') + 1], '1,2')
+
+    def test_files_have_independent_budgets_and_frames_share_results(self):
+        other = self.path.with_name('other.c')
+        other.write_text('int y;\n')
+        sources = Sources(self.path.parent)
+        first = {'file': self.path.name, 'line': '1'}
+        second = {'file': other.name, 'line': '1'}
+        with patch('inc.core.source_blame', side_effect=[{}, {1: {'text': 'int y;', 'author': 'Alice'}}]) as blame:
+            sources.enrich(first)
+            sources.enrich(dict(first))
+            sources.enrich(second)
+            self.assertEqual(blame.call_count, 2)
+            self.assertEqual(second['source'][0]['blame']['author'], 'Alice')
+
+    def test_failed_query_is_retried_next_time(self):
+        good = 'a'*40 + ' 1 1 1\nauthor Alice\n\tint x;\n'
+        with patch('inc.blame.shutil.which', return_value='/git'), patch('inc.blame.subprocess.run', side_effect=[SimpleNamespace(returncode=128, stdout=''), SimpleNamespace(returncode=0, stdout=good)]) as run:
+            self.assertEqual(source_blame(self.path, 1, 1), {})
+            self.assertIn(1, source_blame(self.path, 1, 1))
+            self.assertEqual(run.call_count, 2)
+
+    def test_stack_queries_only_visible_ranges(self):
+        self.path.write_text('\n'.join('line %d' % n for n in range(1, 101)))
+        sources = Sources(self.path.parent)
+        with patch('inc.core.source_blame', return_value={}) as blame:
+            for line in (15, 75, 15):
+                sources.enrich({'file': self.path.name, 'line': str(line)})
+            self.assertEqual([call.args[1:] for call in blame.call_args_list], [(5, 25), (65, 85)])

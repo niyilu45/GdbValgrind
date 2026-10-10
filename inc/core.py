@@ -17,7 +17,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 import webbrowser
 import xml.etree.ElementTree as ET
 from .templates import HTML
@@ -58,7 +57,7 @@ class Sources:
         self.root = Path(root).resolve() if root else None
         self.index = None
         self.cache = {}
-        self.blame_remaining = 3.0
+        self.blame_cache = {}
         self.files = {}
         if self.root and not self.root.is_dir():
             raise ValueError("工程目录不存在: " + str(self.root))
@@ -103,11 +102,11 @@ class Sources:
                 frame["source_note"] = "XML 行号超出源码范围；请核对代码版本"
                 return
             frame["source"] = [{"number": i + 1, "text": lines[i]} for i in range(max(0, line - 11), min(len(lines), line + 10))]
-            attribution = {}
-            if self.blame_remaining > 0:
-                started = time.monotonic()
-                attribution = source_blame(path, frame['source'][0]['number'], frame['source'][-1]['number'], timeout=min(2, self.blame_remaining))
-                self.blame_remaining -= time.monotonic() - started
+            start, end = frame['source'][0]['number'], frame['source'][-1]['number']
+            blame_key = (path, start, end)
+            if blame_key not in self.blame_cache:
+                self.blame_cache[blame_key] = source_blame(path, start, end)
+            attribution = self.blame_cache[blame_key]
             for row in frame['source']:
                 blame = attribution.get(row['number'])
                 if blame and blame.get('text') == row['text']:
