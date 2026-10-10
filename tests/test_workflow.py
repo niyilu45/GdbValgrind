@@ -22,7 +22,7 @@ class WorkflowTests(unittest.TestCase):
                 if interrupted:
                     raise KeyboardInterrupt()
                 return 0
-            with patch.object(workflow.core, 'check_debug_environment'), patch.object(workflow.sys.stdin, 'isatty', return_value=True), patch.object(workflow.shutil, 'which', return_value='/usr/bin/gdb'), patch.object(workflow, 'ProcessSession', return_value=manager), patch.object(workflow.core, 'load_report', return_value=report), patch.object(workflow, 'collect_run', side_effect=collect) as first, patch.object(workflow, 'export_report', return_value=report), patch.object(workflow, 'debug_error', return_value=0) as replay:
+            with patch.object(workflow.core, 'check_debug_environment'), patch.object(workflow.sys.stdin, 'isatty', return_value=True), patch.object(workflow.shutil, 'which', return_value='/usr/bin/gdb'), patch.object(workflow, 'ProcessSession', return_value=manager), patch.object(workflow.core, 'load_report', return_value=report), patch.object(workflow, 'collect_run', side_effect=collect) as first, patch.object(workflow, 'export_report', side_effect=AssertionError('analysis must not export HTML')), patch.object(workflow, 'debug_error', return_value=0) as replay:
                 if interrupted or unsupported:
                     with self.assertRaises(KeyboardInterrupt if interrupted else ValueError):
                         workflow.analyze_run(['/srv/app'], output)

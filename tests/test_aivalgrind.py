@@ -1,4 +1,5 @@
 import http.client
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -48,6 +49,17 @@ class ReportTests(unittest.TestCase):
         self.assertEqual((item["count"], item["records"]), (10, 2))
         self.assertEqual([l["number"] for l in item["stacks"][0]["frames"][0]["source"]], list(range(5, 26)))
         self.assertEqual(item["id"], self.load(content, False)["errors"][0]["id"])
+
+    def test_duplicate_keys_serialize_once_and_keep_legacy_id(self):
+        root = av.ET.fromstring(xml(''.join(error(str(i), frames=frame(ip=hex(i))) for i in range(500))))
+        with patch.object(av.json, 'dumps', wraps=json.dumps) as dumps:
+            report = av.report_from_root(root, self.path)
+            self.assertEqual(dumps.call_count, 1)
+        item = report['errors'][0]
+        legacy = [item['kind'], av.normalized(item['what']),
+                  [(av.diagnostic_label(s['label']), [av.frame_key(f) for f in s['frames']]) for s in item['stacks']]]
+        self.assertEqual(item['id'], hashlib.sha256(json.dumps(legacy, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:16])
+        self.assertEqual(item['records'], 500)
 
     def test_distinct_callers_types_and_origins(self):
         self.assertEqual(len(self.load(xml(error()+error("2", frames=frame(line=16))+error("3", kind="InvalidRead")))["errors"]), 3)
@@ -126,7 +138,8 @@ class ReportTests(unittest.TestCase):
         report = self.load(xml(error() + error('2', frames=frame(line=30))))
         html = av.render_html(report)
         payload = json.loads(html.split('<script id="report-data" type="application/json">')[1].split('</script>')[0])
-        self.assertIn('source', payload['errors'][0]['stacks'][0]['frames'][0])
+        source_ref = payload['errors'][0]['stacks'][0]['frames'][0]['source_ref']
+        self.assertEqual(payload['source_snippets'][source_ref], report['errors'][0]['stacks'][0]['frames'][0]['source'])
         self.assertIn('source', report['errors'][0]['stacks'][0]['frames'][0])
         self.assertEqual(len(payload['source_files']), 1)
 

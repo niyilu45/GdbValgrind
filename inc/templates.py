@@ -23,6 +23,8 @@ main{padding:28px 32px 60px;min-width:0;background:var(--paper)}h2{font-size:24p
 <script>
 'use strict';
 let report=JSON.parse(document.getElementById('report-data').textContent);
+function restoreSources(value){if(value.source_snippets)for(const error of value.errors)for(const stack of error.stacks)for(const frame of stack.frames)if(Number.isInteger(frame.source_ref))frame.source=value.source_snippets[frame.source_ref];return value}
+restoreSources(report);
 let countPrefix=report.counts_complete===false?'至少 ':'';
 const $=id=>document.getElementById(id);
 const labels={InvalidRead:'非法读取',InvalidWrite:'非法写入',InvalidFree:'非法释放',MismatchedFree:'释放方式不匹配',UninitCondition:'未初始化条件',UninitValue:'未初始化值',Overlap:'内存区域重叠',SyscallParam:'系统调用参数',Leak_DefinitelyLost:'确定泄漏',Leak_IndirectlyLost:'间接泄漏',Leak_PossiblyLost:'可能泄漏',Leak_StillReachable:'仍可访问',FishyValue:'可疑参数值'};
@@ -120,7 +122,7 @@ if(report.live){
    const snapshot=await response.json();
    if(snapshot.report){
     const previous=selected?report.errors.find(e=>e.id===selected):null;
-    const limit=visibleLimit;report=snapshot.report;countPrefix=report.counts_complete===false?'至少 ':'';indexReport();nav();list();
+    const limit=visibleLimit;report=restoreSources(snapshot.report);countPrefix=report.counts_complete===false?'至少 ':'';indexReport();nav();list();
     if(limit>visibleLimit){visibleLimit=limit;list(false)}
     const current=selected?report.errors.find(e=>e.id===selected):null;
     if(current&&JSON.stringify(previous)!==JSON.stringify(current))detail(current);

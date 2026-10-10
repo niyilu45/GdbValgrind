@@ -3,6 +3,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import sqlite3
 
 
 def version_requirements(feature, debug_enabled=False):
@@ -20,6 +21,9 @@ def print_tool_versions(feature, debug_enabled=False):
             'requirements': version_requirements(feature, debug_enabled)}
     print('[运行环境] 功能: ' + feature, flush=True)
     print('  Python: %s | %s' % (platform.python_version(), sys.executable), flush=True)
+    if feature in ('collect', 'analyze'):
+        info['tools'].append('SQLite ' + sqlite3.sqlite_version)
+        print('  SQLite: ' + sqlite3.sqlite_version + '（Python 内置，增量结果库）', flush=True)
     for row in info['requirements']:
         print('  ' + row, flush=True)
     names = []

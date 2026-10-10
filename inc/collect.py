@@ -2,6 +2,8 @@
 """First-pass collection with live summaries and interruption-safe raw XML."""
 from contextlib import ExitStack
 import json
+import html
+import shlex
 import os
 from pathlib import Path
 import shutil
@@ -14,7 +16,8 @@ from datetime import datetime
 
 from .core import report_from_root, render_html
 from .commands import command_metadata
-from .live import LiveReport
+from .paged import PagedReport
+from .store import ErrorStore
 from .processes import ProcessSession, interrupt_scope
 from .xmlstream import XMLStream
 from .terminal import TerminalProgress
@@ -80,12 +83,13 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
         'command': [str(executable.resolve())] + list(command[1:]),
         'cwd': str(workdir), 'stdin_file': str(Path(stdin_file).resolve()) if stdin_file else None,
     }, ensure_ascii=False, indent=2), encoding='utf-8')
-    stream = XMLStream()
+    store = None
+    stream = XMLStream(sink=lambda node: store.accept(node))
     state, result, parse_failure = 'running', None, ''
     last_summary = None
     live = None
     display = None
-    next_blame_retry, blame_retries = float('inf'), 0
+
 
     def phase(text):
         watchdog.mark(text)
@@ -104,68 +108,56 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
             consumed += len(chunk)
             try:
                 stream.feed(chunk)
+                store.commit()
             except (ET.ParseError, ValueError) as exc:
                 parse_failure = str(exc)
                 raise ValueError('采集 XML 解析失败，原始文件已保留: ' + parse_failure) from exc
 
     def publish(force=False):
-        nonlocal last_summary, next_blame_retry, blame_retries
-        phase('正在去重并统计错误')
-        report = report_from_root(stream.root, xml_path, xml_complete=stream.complete)
-        summary = summary_data(report)
+        nonlocal last_summary
+        summary = store.summary(stream.complete)
         payload = {**summary, 'state': state, 'exit_code': result,
                    'xml': str(xml_path), 'parse_error': parse_failure}
-        changed = payload != last_summary
-        if changed:
-            blame_retries = 0
-        retry_blame = live is not None and time.monotonic() >= next_blame_retry
-        if force or changed or retry_blame:
+        if force or payload != last_summary:
+            status = {**payload, 'started_at': started_at,
+                      'elapsed_seconds': max(0, time.monotonic() - started_clock)}
+            store.commit(status)
             temp = directory / 'status.json.tmp'
-            with temp.open('w', encoding='utf-8') as file:
-                json.dump({**payload, 'started_at': started_at, 'elapsed_seconds': max(0, time.monotonic() - started_clock)}, file, ensure_ascii=False, indent=2)
-                file.flush()
-                os.fsync(file.fileno())
+            temp.write_text(json.dumps(status, ensure_ascii=False, indent=2), encoding='utf-8')
             os.replace(temp, directory / 'status.json')
             last_summary = payload
-            if live is not None:
-                phase('正在生成网页报告（包含源码）')
-                last_report_stage = [None]
-                def report_progress(text):
-                    if text != last_report_stage[0]:
-                        watchdog.mark(text)
-                        last_report_stage[0] = text
-                    if display is not None:
-                        display.check_quit()
-                        if display.active:
-                            display.set_phase(text)
-                # A cancelled report must not start the same slow Git/source work again.
-                detailed = report_from_root(stream.root, xml_path, project_dir if state != 'interrupted' else None, xml_complete=stream.complete,
-                                            progress=report_progress)
-                if retry_blame and not changed:
-                    blame_retries += 1
-                missing = any('blame' not in row for error in detailed['errors'] for stack in error['stacks']
-                              for frame in stack['frames'] for row in frame.get('source', []))
-                next_blame_retry = time.monotonic() + 15 if missing and blame_retries < 3 else float('inf')
-                detailed['debug_command'] = command_metadata(stream.root, xml_path, project_dir)
-                live.update(detailed, state)
-                report_progress('正在序列化并保存 HTML（源码和 blame 已处理）')
-                saved = directory / 'report.html.tmp'
-                saved.write_text(render_html(detailed, source_base=None), encoding='utf-8')
-                os.replace(saved, directory / 'report.html')
+        else:
+            store.commit()
+        if force:
+            command = [sys.executable, str(Path(__file__).resolve().parents[1] / 'aivalgrind.py'),
+                       'report', str(xml_path), '--output', str(directory / 'full-report.html')]
+            if project_dir:
+                command += ['--project-dir', str(Path(project_dir).resolve())]
+            stats = '\n'.join('%s: %s' % (kind, values) for kind, values in summary['kinds'].items())
+            content = '<!doctype html><meta charset="utf-8"><title>AiValgrind</title><h1>AiValgrind</h1><p>\u91c7\u96c6\u6458\u8981\uff08\u4e0d\u662f\u5b8c\u6574\u62a5\u544a\uff09</p><pre>' + html.escape(stats) + '</pre><p>\u8be6\u60c5\u5df2\u4fdd\u5b58\u5728 errors.xml \u548c results.sqlite3\u3002\u8bf7\u5728 Linux / SSH \u7ec8\u7aef\u6267\u884c\u4ee5\u4e0b\u547d\u4ee4\u5bfc\u51fa\u5b8c\u6574\u79bb\u7ebf\u62a5\u544a\uff1a</p><pre>' + html.escape(shlex.join(command)) + '</pre>'
+            saved = directory / 'report.html.tmp'
+            saved.write_text(content, encoding='utf-8')
+            os.replace(saved, directory / 'report.html')
         if display is not None:
             display.update(summary, state, live.server.origin + '/' if live else '')
 
     print('采集目录: ' + str(directory) + '\n采集时按 q（无需回车）或 Ctrl+C 中断；之后可对 errors.xml 生成报告或自动分析。', flush=True)
     with ExitStack() as files:
         watchdog = files.enter_context(CollectionWatchdog(directory / 'diagnostics.log'))
+        store = ErrorStore(directory / 'results.sqlite3', xml_path)
+        files.callback(store.close)
+        store.commit()
         if live_port is not None:
-            live = files.enter_context(LiveReport(report_from_root(stream.root, xml_path), live_port))
+            base = report_from_root(stream.root, xml_path, xml_complete=False)
+            base['project'] = str(Path(project_dir).resolve()) if project_dir else ''
+            base['debug_command'] = command_metadata(stream.root, xml_path, project_dir)
+            live = files.enter_context(PagedReport(store.path, base, live_port))
         reader = files.enter_context(xml_path.open('rb'))
         output = files.enter_context((directory / 'program.log').open('wb'))
         diagnostics = files.enter_context((directory / 'launcher.log').open('wb'))
         target_input = files.enter_context(open(stdin_file, 'rb')) if stdin_file else subprocess.DEVNULL
         display = files.enter_context(TerminalProgress(directory, started_at, started_clock, enabled=not plain_terminal, runtime_info=runtime_info))
-        display.update(summary_data(report_from_root(stream.root, xml_path)), state, live.server.origin + '/' if live else '')
+        display.update(store.summary(), state, live.server.origin + '/' if live else '')
         display.start_updates()
         transport = None
         try:
@@ -189,7 +181,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
                                       + '；可使用 --plain-terminal 关闭状态区定位问题')
                     if transport is not None and transport.error:
                         raise OSError('程序输出读取失败: ' + str(transport.error))
-                    phase('正在解析 XML')
+                    phase('正在解析新增 XML 并增量入库')
                     consume(reader)
                     watchdog.mark('去重、保存统计及生成网页')
                     publish()

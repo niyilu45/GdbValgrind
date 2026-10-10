@@ -19,12 +19,31 @@ def source_page(file):
     return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + html.escape(file['path']) + '</title><style>body{margin:0;color:#1f2328;background:white;font:14px/1.5 system-ui}header{padding:16px 24px;background:#f6f8fa;border-bottom:1px solid #d1d9e0;overflow-wrap:anywhere}.file{margin:24px;border:1px solid #d1d9e0;border-radius:6px;overflow:auto}table{border-collapse:collapse;width:100%;font:12px/20px ui-monospace,Consolas,monospace}.num{width:1%;min-width:60px;padding:0 16px;text-align:right;user-select:none}.num a{color:#59636e;text-decoration:none}.code{white-space:pre;tab-size:4;padding-right:16px}td{vertical-align:top}tr:target{background:#fff8c5}.keyword{color:#cf222e}.string{color:#0a3069}.number{color:#0550ae}.comment{color:#6e7781}@media(max-width:600px){.file{margin:8px}}</style><header>' + html.escape(file['path']) + '<br>当前工程源码（文件修改后内容可能与错误发生时不同） · 点击行号定位</header><div class="file"><table>' + rows + '</table></div></html>'
 
 
-def browser_report(report, source_base='/source/'):
+def browser_report(report, source_base='/source/', compact=False):
     files = report.get('source_files', {})
     errors = []
+    snippets, by_location = [], {}
     for error in report['errors']:
         item = {k: v for k, v in error.items() if k != 'unique_ids'}
         item['stacks'] = error['stacks']
+        if compact:
+            item['stacks'] = []
+            for stack in error['stacks']:
+                frames = []
+                for frame in stack['frames']:
+                    frame = dict(frame)
+                    source = frame.get('source')
+                    if source:
+                        location = (frame.get('source_file_id'), frame.get('local_file'), frame.get('dir'), frame.get('file'), frame.get('line'))
+                        index = by_location.get(location)
+                        if index is None or snippets[index] != source:
+                            index = len(snippets)
+                            snippets.append(source)
+                            by_location[location] = index
+                        frame.pop('source')
+                        frame['source_ref'] = index
+                    frames.append(frame)
+                item['stacks'].append({**stack, 'frames': frames})
         errors.append(item)
-    return {**report, 'source_access': 'server' if source_base is not None else 'local', 'errors': errors, 'source_files': {key: {'path': f['path'], 'url': (source_base + key + '.html') if source_base is not None else 'file:///' + quote(f['path'].replace(chr(92), '/').lstrip('/'), safe='/:' )} for key, f in files.items()}}
+    return {**report, **({'source_snippets': snippets} if compact else {}), 'source_access': 'server' if source_base is not None else 'local', 'errors': errors, 'source_files': {key: {'path': f['path'], 'url': (source_base + key + '.html') if source_base is not None else 'file:///' + quote(f['path'].replace(chr(92), '/').lstrip('/'), safe='/:' )} for key, f in files.items()}}
 

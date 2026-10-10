@@ -79,3 +79,10 @@ class BlameTests(unittest.TestCase):
                 sources.enrich({'file': self.path.name, 'line': '1'})
             blame.assert_not_called()
         self.assertTrue(any(str(self.path) in stage for stage in stages))
+
+    def test_repeated_frames_resolve_source_once(self):
+        sources = Sources(self.path.parent)
+        with patch.object(sources, '_resolve', wraps=sources._resolve) as resolve:
+            for line in range(100):
+                self.assertEqual(sources.resolve({'file': self.path.name, 'line': str(line)}), self.path)
+            self.assertEqual(resolve.call_count, 1)

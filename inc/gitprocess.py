@@ -21,7 +21,10 @@ def run_git(command, timeout, checkpoint=None):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise subprocess.TimeoutExpired(command, timeout)
-                time.sleep(min(0.1, remaining))
+                try:
+                    child.wait(timeout=min(0.1, remaining))
+                except subprocess.TimeoutExpired:
+                    pass
             checkpoint()
             output.seek(0)
             errors.seek(0)

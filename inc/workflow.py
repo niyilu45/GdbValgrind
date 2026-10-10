@@ -3,6 +3,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import shlex
 
 from . import core
 from .api import DebugOptions, debug_error, export_report
@@ -13,7 +14,7 @@ from .output import prepare_output
 
 def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=None, stdin_file=None, live_port=None,
                 plain_terminal=False, output_mode='pty', runtime_info=None):
-    """Collect if needed, export HTML, then replay with automatic value capture.
+    """Collect if needed, load error locations, then replay with value capture.
 
     Stops at each runtime error in GDB; continue/quit remain interactive.
     Ctrl+C aborts the workflow and never starts a new replay.
@@ -21,8 +22,8 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
     directory = Path(output_dir).resolve()
     source = Path(xml_path).resolve() if xml_path else None
     if source:
-        print('正在解析已有 XML、去重并读取源码，请稍候……', flush=True)
-    report = core.load_report(source, project_dir) if source else None
+        print('正在解析已有 XML 和错误位置（不等待源码或 blame）……', flush=True)
+    report = core.load_report(source) if source else None
     command = list(command)
     if report:
         metadata = report['debug_command']
@@ -55,9 +56,14 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
         collect_run(command, directory, cwd=cwd, stdin_file=stdin_file, live_port=live_port, project_dir=project_dir,
                     plain_terminal=plain_terminal, output_mode=output_mode, runtime_info=runtime_info)
         source = directory / 'errors.xml'
-    print('步骤 2/3：生成 HTML 报告。', flush=True)
-    report = export_report(source, directory / 'report.html', project_dir=project_dir)
-    print('报告: ' + str(directory / 'report.html'), flush=True)
+    print('步骤 2/3：读取复现位置（不生成完整 HTML，不查询 blame）。', flush=True)
+    report = report or core.load_report(source)
+    report['project'] = str(Path(project_dir).resolve()) if project_dir else ''
+    export_command = [sys.executable, str(Path(__file__).resolve().parents[1] / 'aivalgrind.py'),
+                      'report', str(source), '--output', str(directory / 'full-report.html')]
+    if project_dir:
+        export_command += ['--project-dir', report['project']]
+    print('需要完整离线报告时，可另开 SSH 终端执行：\n' + shlex.join(export_command), flush=True)
     if not report['errors']:
         print('报告中没有已完整记录的内存错误，不启动复现采集。', flush=True)
         return 0

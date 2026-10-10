@@ -5,10 +5,23 @@ import unittest
 
 from inc.core import save_report, render_html
 from inc.live import LiveReport
-from inc.sourcepages import source_page
+from inc.sourcepages import source_page, browser_report
+from copy import deepcopy
 
 
 class SourcePageTests(unittest.TestCase):
+    def test_compact_sources_share_identical_snippets_without_mutation(self):
+        frame = {'file': 'a.c', 'line': '1', 'source': [{'number': 1, 'text': '<script>x</script>', 'blame': {'author': 'Alice'}}]}
+        report = {'errors': [{'stacks': [{'frames': [frame, deepcopy(frame)]}]}]}
+        before = deepcopy(report)
+        compact = browser_report(report, compact=True)
+        self.assertEqual(len(compact['source_snippets']), 1)
+        self.assertEqual([f['source_ref'] for f in compact['errors'][0]['stacks'][0]['frames']], [0, 0])
+        self.assertEqual(report, before)
+        self.assertNotIn('<script>x</script>', render_html(report))
+        report['errors'][0]['stacks'][0]['frames'][1]['source'][0]['blame']['author'] = 'Bob'
+        self.assertEqual(len(browser_report(report, compact=True)['source_snippets']), 2)
+
     def test_offline_only_paths_and_no_sidecar(self):
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / 'a.c'

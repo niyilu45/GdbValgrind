@@ -21,7 +21,7 @@ class LiveHandler(Handler):
             previous = self.path.split('=', 1)[1]
             payload = {'revision': revision}
             if previous != str(revision):
-                payload['report'] = browser_report(report)
+                payload['report'] = browser_report(report, compact=True)
             return self.reply(200, payload)
         return self.reply(404, {'message': '未找到'})
 

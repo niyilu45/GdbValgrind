@@ -25,10 +25,12 @@ from .processes import ProcessSession, interrupt_scope
 from .xmlstream import read_xml
 from .commands import command_metadata
 from .navigation import GDB_NAVIGATION_SCRIPT
-from copy import copy
+from copy import copy, deepcopy
+from functools import lru_cache
 from .output import register_capture
 from .sourcepages import browser_report, source_page
 from .blame import source_blame
+from .paged_ui import SCRIPT as PAGED_SCRIPT
 
 
 def integer(value, default=0):
@@ -60,10 +62,17 @@ class Sources:
         self.cache = {}
         self.blame_cache = {}
         self.files = {}
+        self.resolved = {}
         if self.root and not self.root.is_dir():
             raise ValueError("工程目录不存在: " + str(self.root))
 
     def resolve(self, frame):
+        key = (frame.get('dir', ''), frame.get('file', ''))
+        if key not in self.resolved:
+            self.resolved[key] = self._resolve(frame)
+        return self.resolved[key]
+
+    def _resolve(self, frame):
         if not self.root or not frame.get("file"):
             return None
         original = PurePosixPath(frame.get("dir", "").replace("\\", "/")) / frame["file"].replace("\\", "/")
@@ -126,14 +135,17 @@ class Sources:
             frame["source_note"] = "无法读取源码: " + str(exc)
 
 
+@lru_cache(maxsize=4096)
+def source_identity(directory, filename):
+    return str(PurePosixPath(directory.replace('\\', '/')) / filename.replace('\\', '/'))
+
+
 def frame_key(frame, function_only=False):
     if frame.get("file") and integer(frame.get("line")) > 0:
         if function_only:
             # Uninitialized diagnostics from the same source location can be
             # emitted through different loaded copies of the same module.
-            directory = frame.get('dir', '').replace('\\', '/')
-            filename = frame['file'].replace('\\', '/')
-            source = str(PurePosixPath(directory) / filename)
+            source = source_identity(frame.get('dir', ''), frame['file'])
             return (frame.get('fn', ''), source, integer(frame['line']))
         return tuple(frame.get(k, "") for k in ("obj", "fn", "dir", "file", "line"))
     if function_only and frame.get('fn') and frame.get('fn') != '???':
@@ -152,12 +164,48 @@ def load_report(xml_path, project=None, allow_partial=True):
     return report
 
 
-def report_from_root(root, xml_path, project=None, xml_complete=True, progress=None):
+def report_from_root(root, xml_path, project=None, xml_complete=True, progress=None, parsed_report=None):
+    if parsed_report is not None:
+        report = deepcopy(parsed_report)
+        sources = Sources(project, progress=progress)
+        for error in report['errors']:
+            for stack in error['stacks']:
+                for frame in stack['frames']:
+                    sources.enrich(frame)
+        report.update(project=str(sources.root or ''), source_files=sources.files)
+        return report
     counts = {}
     for pair in root.findall("errorcounts/pair"):
         uid = pair.findtext("unique", "")
         counts[uid] = max(counts.get(uid, 0), integer(pair.findtext("count"), 1))
     grouped, seen = {}, set()
+    # Per-report bounded caches: repeated frames/text are common across errors.
+    clean_text = lru_cache(maxsize=4096)(normalized)
+    clean_label = lru_cache(maxsize=4096)(diagnostic_label)
+    fields = ('ip', 'obj', 'fn', 'dir', 'file', 'line')
+    @lru_cache(maxsize=8192)
+    def cached_frame(values, function_only):
+        return frame_key(dict(zip(fields, values)), function_only)
+
+    cache_samples, use_frame_cache = 0, True
+    def stack_key(frame, function_only):
+        nonlocal cache_samples, use_frame_cache
+        if not use_frame_cache:
+            return frame_key(frame, function_only)
+        cache_samples += 1
+        if cache_samples % 2048 == 0:
+            stats = cached_frame.cache_info()
+            if stats.hits * 4 < stats.misses:
+                use_frame_cache = False
+                cached_frame.cache_clear()
+                return frame_key(frame, function_only)
+        values = tuple(frame.get(field, '') for field in fields)
+        # These symbolized cases deliberately ignore instruction addresses.
+        if (frame.get('file') and integer(frame.get('line')) > 0) or (
+                function_only and frame.get('fn') and frame['fn'] != '???'):
+            values = ('',) + values[1:]
+        return cached_frame(values, function_only)
+
     for error in root.findall("error"):
         uid = error.findtext("unique", "")
         if uid and uid in seen:
@@ -178,16 +226,17 @@ def report_from_root(root, xml_path, project=None, xml_complete=True, progress=N
             elif child.tag == "origin":
                 for stack in child.findall("stack"):
                     stacks.append({"label": child.findtext("what", "未初始化值来源"), "frames": [{k: f.findtext(k, "") for k in ("ip", "obj", "fn", "dir", "file", "line")} for f in stack.findall("frame")]})
-        signature = [kind, "" if kind.startswith("Leak_") else normalized(what),
-                     [(diagnostic_label(s["label"]), [frame_key(f, kind in ('UninitCondition', 'UninitValue')) for f in s["frames"]]) for s in stacks]]
+        signature = (kind, "" if kind.startswith("Leak_") else clean_text(what),
+                     tuple((clean_label(s["label"]), tuple(stack_key(f, kind in ('UninitCondition', 'UninitValue')) for f in s["frames"])) for s in stacks))
         if not any(s["frames"] for s in stacks):
-            signature.append(uid or ET.tostring(error, encoding="unicode"))
-        key = json.dumps(signature, ensure_ascii=False, sort_keys=True)
-        if key not in grouped:
-            grouped[key] = {"id": hashlib.sha256(key.encode()).hexdigest()[:16], "kind": kind,
+            signature += (uid or ET.tostring(error, encoding="unicode"),)
+        if signature not in grouped:
+            # Serialize once per distinct issue, retaining the existing public ID.
+            key = json.dumps(signature, ensure_ascii=False, sort_keys=True)
+            grouped[signature] = {"id": hashlib.sha256(key.encode()).hexdigest()[:16], "kind": kind,
                             "what": what, "stacks": stacks, "count": 0, "records": 0,
                             "unique_ids": [], "leaked_bytes": 0, "leaked_blocks": 0}
-        item = grouped[key]
+        item = grouped[signature]
         item["count"] += max(1, counts.get(uid, 1))
         item["records"] += 1
         item["unique_ids"].append(uid)
@@ -442,8 +491,9 @@ def _run_debug(error, args, processes):
 
 
 def render_html(report, token="", source_base='/source/'):
-    payload = json.dumps({**browser_report(report, source_base), "token": token}, ensure_ascii=False, separators=(',', ': ')).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
-    return HTML.replace("__REPORT_DATA__", payload)
+    payload = json.dumps({**browser_report(report, source_base, compact=True), "token": token}, ensure_ascii=False, separators=(',', ': ')).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    template = HTML.replace('</script></body>', PAGED_SCRIPT + '</script></body>') if report.get('paged') else HTML
+    return template.replace("__REPORT_DATA__", payload)
 
 
 def save_report(report, output_path):

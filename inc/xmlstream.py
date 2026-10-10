@@ -4,7 +4,8 @@ from pathlib import Path
 
 
 class XMLStream:
-    def __init__(self):
+    def __init__(self, sink=None):
+        self.sink = sink
         self.parser = ET.XMLPullParser(events=('start', 'end'))
         self.root = ET.Element('valgrindoutput')
         self.counts = ET.SubElement(self.root, 'errorcounts')
@@ -13,6 +14,7 @@ class XMLStream:
         self.complete = False
         self.tail = b''
         self.parse_error = ''
+        self.revision = 0
 
     def feed(self, data):
         scan = self.tail + data
@@ -35,14 +37,22 @@ class XMLStream:
                 self.stack.append(node)
                 continue
             if len(self.stack) == 3 and self.stack[-2].tag == 'errorcounts' and node.tag == 'pair':
-                self.counts.append(node)
+                if self.sink is None or not self.sink(node):
+                    self.counts.append(node)
+                self.revision += 1
                 self.stack[-2].remove(node)
             elif len(self.stack) == 2:
                 if node.tag != 'errorcounts':
-                    self.root.append(node)
+                    if self.sink is None or not self.sink(node):
+                        if self.sink is not None and node.tag == 'status':
+                            for previous in self.root.findall('status'):
+                                self.root.remove(previous)
+                        self.root.append(node)
+                    self.revision += 1
                 self.stack[0].remove(node)
             elif len(self.stack) == 1:
                 self.complete = True
+                self.revision += 1
             self.stack.pop()
 
     def finish(self, allow_partial=True):
