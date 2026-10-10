@@ -27,6 +27,7 @@ from .commands import command_metadata
 from .navigation import GDB_NAVIGATION_SCRIPT
 from copy import copy, deepcopy
 from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from .output import register_capture
 from .sourcepages import browser_report, source_page
 from .blame import source_blame
@@ -95,6 +96,7 @@ class Sources:
         return matches[0] if len(matches) == 1 else None
 
     def enrich(self, frame, with_blame=True):
+        frame.pop('source_note', None)
         self.progress('定位源码: ' + str(frame.get('file', '无文件')))
         path = self.resolve(frame)
         if not path:
@@ -159,11 +161,61 @@ def frame_key(frame, function_only=False):
     return (frame.get("obj", ""), frame.get("fn", ""), frame.get("ip", ""))
 
 
-def load_report(xml_path, project=None, allow_partial=True):
-    stream = read_xml(xml_path, allow_partial)
-    report = report_from_root(stream.root, xml_path, project, xml_complete=stream.complete)
+def load_report(xml_path, project=None, allow_partial=True, *, workers=1, progress=None):
+    if not isinstance(workers,int) or not 1 <= workers <= 8:
+        raise ValueError('源码查询并发数必须在 1 到 8 之间')
+    stream = read_xml(xml_path, allow_partial, progress=progress)
+    report = report_from_root(stream.root, xml_path, None if workers>1 else project,
+                              xml_complete=stream.complete, progress=progress)
+    if project and workers>1:
+        enrich_parallel(report, project, workers, progress)
     report['debug_command'] = command_metadata(stream.root, xml_path, project)
     return report
+
+
+def enrich_parallel(report, project, workers, progress=None):
+    """Bounded in-flight jobs; worker-local source caches, cancellable Git queries."""
+    root = Path(project).resolve()
+    if not root.is_dir():
+        raise ValueError('工程目录不存在: ' + str(root))
+    frames = [f for e in report['errors'] for s in e['stacks'] for f in s['frames']]
+    stop, local = threading.Event(), threading.local()
+    def checkpoint(text):
+        if stop.is_set():
+            raise KeyboardInterrupt()
+    def enrich(frame):
+        if not hasattr(local,'sources'):
+            local.sources=Sources(root, progress=checkpoint)
+        sources=local.sources
+        if len(sources.cache)>32:
+            sources.cache.clear()
+        checkpoint('')
+        sources.enrich(frame)
+        key=frame.get('source_file_id')
+        return (key,sources.files[key]) if key else None
+    executor=ThreadPoolExecutor(max_workers=workers,thread_name_prefix='aivalgrind-report-source')
+    pending=set(); iterator=iter(frames); done_count=0
+    try:
+        for _ in range(min(workers*2,len(frames))):
+            pending.add(executor.submit(enrich,next(iterator)))
+        while pending:
+            if progress:
+                progress('源码与 blame（%d 线程） | %d / %d 帧' % (workers,done_count,len(frames)))
+            completed,pending=wait(pending,timeout=0.1,return_when=FIRST_COMPLETED)
+            for future in completed:
+                result=future.result()
+                if result:
+                    report['source_files'][result[0]]=result[1]
+                done_count+=1
+                frame=next(iterator,None)
+                if frame is not None:
+                    pending.add(executor.submit(enrich,frame))
+        report['project']=str(root)
+        if progress:
+            progress('源码与 blame（%d 线程） | %d / %d 帧' % (workers,done_count,len(frames)))
+    finally:
+        stop.set()
+        executor.shutdown(wait=True,cancel_futures=True)
 
 
 def report_from_root(root, xml_path, project=None, xml_complete=True, progress=None, parsed_report=None):
@@ -208,7 +260,10 @@ def report_from_root(root, xml_path, project=None, xml_complete=True, progress=N
             values = ('',) + values[1:]
         return cached_frame(values, function_only)
 
-    for error in root.findall("error"):
+    raw_errors=root.findall('error')
+    for index,error in enumerate(raw_errors):
+        if progress and index % 100 == 0:
+            progress('去重错误 | %d / %d 条' % (index,len(raw_errors)))
         uid = error.findtext("unique", "")
         if uid and uid in seen:
             continue
@@ -244,12 +299,17 @@ def report_from_root(root, xml_path, project=None, xml_complete=True, progress=N
         item["unique_ids"].append(uid)
         item["leaked_bytes"] += integer(error.findtext("xwhat/leakedbytes"))
         item["leaked_blocks"] += integer(error.findtext("xwhat/leakedblocks"))
+    if progress:
+        progress('去重错误 | %d / %d 条' % (len(raw_errors),len(raw_errors)))
     sources = Sources(project, progress=progress)
     errors = list(grouped.values())
     for error in errors:
         for stack in error["stacks"]:
             for frame in stack["frames"]:
-                sources.enrich(frame)
+                if project:
+                    sources.enrich(frame)
+                else:
+                    frame['source_note']='未指定工程目录'
     statuses = root.findall("status/state")
     finished = bool(xml_complete and statuses and statuses[-1].text == "FINISHED")
     return {"xml": str(Path(xml_path).resolve()), "project": str(sources.root or ""), "source_files": sources.files,

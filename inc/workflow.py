@@ -10,6 +10,8 @@ from .api import DebugOptions, debug_error, export_report
 from .collect import collect_run
 from .processes import ProcessSession
 from .output import prepare_output
+from .terminal import ReportProgress
+from .store import load_replay
 
 
 def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=None, stdin_file=None, live_port=None,
@@ -21,9 +23,12 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
     """
     directory = Path(output_dir).resolve()
     source = Path(xml_path).resolve() if xml_path else None
+    print('analyze 流程版本: SQLite 分页 / 步骤 2 不生成 HTML\n运行代码: ' + str(Path(__file__).resolve()),flush=True)
+    report = None
     if source:
         print('正在解析已有 XML 和错误位置（不等待源码或 blame）……', flush=True)
-    report = core.load_report(source) if source else None
+        with ReportProgress('读取已有报告') as progress:
+            report = core.load_report(source,progress=progress)
     command = list(command)
     if report:
         metadata = report['debug_command']
@@ -57,7 +62,14 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
                     plain_terminal=plain_terminal, output_mode=output_mode, runtime_info=runtime_info)
         source = directory / 'errors.xml'
     print('步骤 2/3：读取复现位置（不生成完整 HTML，不查询 blame）。', flush=True)
-    report = report or core.load_report(source)
+    if report is None:
+        with ReportProgress('步骤 2/3：准备复现位置') as progress:
+            database=directory/'results.sqlite3'
+            if database.is_file():
+                progress('读取 SQLite 复现位置')
+                report=load_replay(database,source,progress)
+            else:
+                report=core.load_report(source,progress=progress)
     report['project'] = str(Path(project_dir).resolve()) if project_dir else ''
     export_command = [sys.executable, str(Path(__file__).resolve().parents[1] / 'aivalgrind.py'),
                       'report', str(source), '--output', str(directory / 'full-report.html')]

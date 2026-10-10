@@ -12,6 +12,48 @@ import threading
 from .versions import version_requirements
 
 
+class ReportProgress:
+    """Heartbeat for blocking report work; TTY overwrites one line."""
+    def __init__(self, task):
+        self.task, self.stage = task, '准备中'
+        self.start = self.changed = time.monotonic()
+        self.stop = threading.Event()
+        self.thread = None
+
+    def __call__(self, text):
+        # Keep the phase clock stable while byte/frame counters change.
+        phase = text.split(' | ', 1)[0]
+        if phase != self.stage.split(' | ', 1)[0]:
+            self.changed = time.monotonic()
+        self.stage = text
+
+    def __enter__(self):
+        print('[%s] 开始 %s；Ctrl+C 可取消' % (self.task, datetime.now().astimezone().isoformat(timespec='seconds')), flush=True)
+        def heartbeat():
+            while not self.stop.wait(1 if sys.stdout.isatty() else 5):
+                self.render()
+        self.thread = threading.Thread(target=heartbeat, name='aivalgrind-report-progress', daemon=True)
+        self.thread.start()
+        return self
+
+    def render(self):
+        now = time.monotonic()
+        message = '[%s] %s | 本阶段 %.1fs | 总耗时 %.1fs' % (self.task, self.stage, now-self.changed, now-self.start)
+        if sys.stdout.isatty():
+            width = max(20, shutil.get_terminal_size().columns-1)
+            print('\r' + clip(message,width).ljust(width), end='', flush=True)
+        else:
+            print(message, flush=True)
+
+    def __exit__(self, exc_type, exc, tb):
+        self.stop.set()
+        self.thread.join(timeout=1)
+        self.render()
+        if sys.stdout.isatty():
+            print()
+        print('[%s] %s；总耗时 %.1fs' % (self.task, '已中断/失败' if exc_type else '完成', time.monotonic()-self.start), flush=True)
+
+
 def clip(text, width):
     result, used = [], 0
     for char in str(text):

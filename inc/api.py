@@ -48,15 +48,18 @@ def _arguments(options, project_dir, frame=None, port=8765, open_browser=False):
 
 
 def export_report(xml_path: PathLike, output_path: PathLike = "report.html", *,
-                  project_dir: Optional[PathLike] = None) -> dict:
+                  project_dir: Optional[PathLike] = None, workers: int = 4) -> dict:
     """Parse/deduplicate XML, save standalone HTML and return the report dictionary.
 
     Does not run the target. The output's parent directory must already exist.
     """
     if Path(xml_path).resolve() == Path(output_path).resolve():
         raise ValueError("输出文件不能覆盖输入 XML")
-    report = core.load_report(xml_path, project_dir)
-    core.save_report(report, output_path)
+    from .terminal import ReportProgress
+    with ReportProgress('导出 HTML') as progress:
+        report = core.load_report(xml_path, project_dir, workers=workers, progress=progress)
+        progress('序列化并写入 HTML')
+        core.save_report(report, output_path)
     return report
 
 

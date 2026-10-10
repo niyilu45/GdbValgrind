@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 import unittest
 import xml.etree.ElementTree as ET
-from inc.store import ErrorStore, connect, issue_data
+from inc.store import ErrorStore, connect, issue_data, load_replay
 from inc.xmlstream import XMLStream
 from inc.core import report_from_root
 from tests.test_aivalgrind import error, frame, xml
@@ -32,6 +32,9 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(rows,reference['errors'])
             self.assertTrue(store.summary(stream.complete)['counts_complete'])
             self.assertEqual(store.summary()['occurrences'],12)
+            store.commit(store.summary(stream.complete))
+            replay=load_replay(store.path,'errors.xml')
+            self.assertEqual(replay['errors'],reference['errors'])
 
     def test_partial_counts_before_errors_and_empty_uid(self):
         with tempfile.TemporaryDirectory() as directory, ExitStack() as cleanup:

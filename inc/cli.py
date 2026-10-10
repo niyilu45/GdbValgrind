@@ -42,6 +42,7 @@ def main(argv=None):
         p.add_argument('--strict-xml', action='store_true', help='要求 XML 完整闭合；默认恢复已完整写出的记录')
         if name == "report":
             p.add_argument("--output", "-o", type=Path, default=Path("report.html"))
+            p.add_argument('--workers',type=int,choices=range(1,9),default=4,help='源码/blame 并发数，1–8，默认 4')
         if name == "serve":
             p.add_argument("--port", type=int, default=8765)
             p.add_argument("--open", action="store_true")
@@ -68,7 +69,10 @@ def main(argv=None):
                                live_port=None if args.no_web else args.port, project_dir=args.project_dir,
                                plain_terminal=args.plain_terminal, output_mode=args.output_mode, runtime_info=runtime_info)
         print('正在解析 XML、去重并读取源码，请稍候……', flush=True)
-        report = load_report(args.xml, args.project_dir, allow_partial=not args.strict_xml)
+        from .terminal import ReportProgress
+        with ReportProgress('解析与准备报告') as progress:
+            report = load_report(args.xml, args.project_dir, allow_partial=not args.strict_xml,
+                                 workers=getattr(args,'workers',1),progress=progress)
         args.navigation_errors = report['errors']
         if not report['finished']:
             print('提示：报告不完整，仅恢复已完整写出的错误；重复次数及退出时泄漏信息可能缺失。', file=sys.stderr)
@@ -81,7 +85,9 @@ def main(argv=None):
             if args.output.resolve() == args.xml.resolve():
                 raise ValueError("输出文件不能覆盖输入 XML")
             print('正在生成并保存 HTML 报告……', flush=True)
-            save_report(report, args.output)
+            with ReportProgress('保存 HTML') as progress:
+                progress('序列化并写入 HTML')
+                save_report(report, args.output)
             print("已生成 " + str(args.output.resolve()) + "，去重后 " + str(len(report["errors"])) + " 类错误位置，记录次数 " + str(report["occurrences"]))
         elif args.action == "serve":
             serve(report, args)

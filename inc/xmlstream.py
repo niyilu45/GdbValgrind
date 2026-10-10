@@ -69,8 +69,9 @@ class XMLStream:
         return self.root
 
 
-def read_xml(path, allow_partial=True):
+def read_xml(path, allow_partial=True, progress=None):
     stream = XMLStream()
+    total, consumed = Path(path).stat().st_size, 0
     try:
         with Path(path).open('rb') as file:
             while True:
@@ -78,6 +79,9 @@ def read_xml(path, allow_partial=True):
                 if not data:
                     break
                 stream.feed(data)
+                consumed += len(data)
+                if progress:
+                    progress('解析 XML | %d / %d 字节' % (consumed,total))
         stream.finish(allow_partial)
     except ET.ParseError as exc:
         raise ValueError('XML 格式无效: ' + str(exc)) from exc

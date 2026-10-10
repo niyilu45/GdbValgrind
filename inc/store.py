@@ -124,3 +124,23 @@ def issue_data(row):
     item = json.loads(row['enriched'] or row['payload'])
     item.update(count=row['count'], records=row['records'], leaked_bytes=row['bytes'], leaked_blocks=row['blocks'])
     return item
+
+
+def load_replay(path, xml_path, progress=None):
+    """Reuse the just-collected database without reading XML or source snippets."""
+    from .commands import command_metadata
+    root=ET.Element('valgrindoutput')
+    report=report_from_root(root,xml_path,xml_complete=False)
+    with connect(path) as db:
+        status_row=db.execute("SELECT value FROM metadata WHERE key='status'").fetchone()
+        status=json.loads(status_row[0]) if status_row else {}
+        total=status.get('locations',0)
+        cursor=db.execute('SELECT payload,NULL AS enriched,count,records,bytes,blocks FROM issues ORDER BY seq')
+        for row in cursor:
+            report['errors'].append(issue_data(row))
+            if progress and len(report['errors'])%100==0:
+                progress('读取 SQLite 复现位置 | %d / %d 条' % (len(report['errors']),total))
+    report.update(occurrences=status.get('occurrences',0),finished=status.get('finished',False),
+                  xml_complete=status.get('finished',False),counts_complete=status.get('counts_complete',False))
+    report['debug_command']=command_metadata(root,xml_path)
+    return report
