@@ -24,6 +24,7 @@ def main(argv=None):
     analyze.add_argument('--stdin-file', type=Path)
     analyze.add_argument('--port', type=int, default=8765, help='首次采集实时网页端口，0 为自动选择')
     analyze.add_argument('--no-web', action='store_true', help='关闭首次采集实时网页')
+    analyze.add_argument('--pause-on-error', action='store_true', help='保存现场后暂停，进入交互式 GDB；默认自动继续至程序结束')
     collect = sub.add_parser('collect', help='首次运行 Valgrind，实时统计并保留中断结果')
     collect.add_argument('--output-dir', type=Path, required=True, help='采集目录；可复用，只清理清单登记的旧输出')
     collect.add_argument('--cwd', type=Path)
@@ -63,7 +64,8 @@ def main(argv=None):
         if args.action == 'analyze':
             return analyze_run(command, args.output_dir, xml_path=args.xml, project_dir=args.project_dir,
                                cwd=args.cwd, stdin_file=args.stdin_file, live_port=None if args.no_web else args.port,
-                               plain_terminal=args.plain_terminal, output_mode=args.output_mode, runtime_info=runtime_info)
+                               plain_terminal=args.plain_terminal, output_mode=args.output_mode, runtime_info=runtime_info,
+                               pause_on_error=args.pause_on_error)
         if args.action == 'collect':
             return collect_run(command, args.output_dir, cwd=args.cwd, stdin_file=args.stdin_file, interval=args.interval,
                                live_port=None if args.no_web else args.port, project_dir=args.project_dir,

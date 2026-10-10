@@ -24,8 +24,11 @@ class DebugOptions:
     auto_values: bool = False
     capture_dir: PathLike = "captures"
     stop_on_error: bool = False
+    auto_continue: bool = False
 
     def __post_init__(self):
+        if self.auto_continue and not self.auto_values:
+            raise ValueError('auto_continue 需要同时启用 auto_values')
         if isinstance(self.command, (str, bytes)) or not self.command:
             raise ValueError("command 必须是非空参数列表，例如 ['./app', 'arg1']")
         if any(not isinstance(arg, str) or '\0' in arg for arg in self.command):
@@ -43,6 +46,7 @@ def _arguments(options, project_dir, frame=None, port=8765, open_browser=False):
         auto_values=options.auto_values if options else False,
         capture_dir=options.capture_dir if options else "captures",
         stop_on_error=options.stop_on_error if options else False,
+        auto_continue=options.auto_continue if options else False,
         project_dir=project_dir, frame=frame, port=port, open=open_browser,
     )
 
@@ -67,7 +71,8 @@ def debug_error(report: dict, error_id: str, options: DebugOptions, *,
                 frame: Optional[str] = None) -> int:
     """Debug one selected report entry, returning GDB's exit code.
 
-    Requires Linux and an interactive terminal. auto_values captures the first
+    Requires Linux; interactive debugging also requires a terminal.
+    auto_continue captures without waiting for input. auto_values captures the first
     occurrence of each runtime diagnostic, not necessarily the selected old one.
     """
     error = next((item for item in report["errors"] if item["id"] == error_id), None)

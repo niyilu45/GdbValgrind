@@ -300,17 +300,27 @@ class AutoValueCapture:
         self.sequence = 0
         self.active = False
         self.seen = set()
+        self.resume_allowed = False
+        self.failure = ''
+        self.stop_reason = ''
         gdb.events.stop.connect(self.on_stop)
 
     def on_stop(self, event):
         if self.active or self.last_count == float('inf'):
+            return
+        self.resume_allowed = False
+        self.stop_reason = getattr(event, 'stop_signal', '') or '非内存错误断点或未知停止原因'
+        # Do not resume user breakpoints, interrupts or real target signals.
+        if _capture_config.get('auto_continue') and (getattr(event, 'breakpoints', ()) or
+                getattr(event, 'stop_signal', None) not in (None, 'SIGTRAP')):
             return
         self.active = True
         try:
             counters = capture_execute('monitor v.info n_errs_found')
             match = re.search(r'n_errs_found\s+(\d+)', counters)
             if not match:
-                gdb.write('[AiValgrind] 无法读取错误计数，本次未采集：' + counters + '\n')
+                self.failure = '无法读取错误计数，本次未采集：' + counters
+                gdb.write('[AiValgrind] ' + self.failure + '\n')
                 return
             count = int(match.group(1))
             # A breakpoint, step or SIGINT must not relabel an old error as new.
@@ -318,11 +328,13 @@ class AutoValueCapture:
                 return
             message = capture_execute('monitor v.info last_error')
             if message.startswith('[unavailable:') or not message.strip():
-                gdb.write('[AiValgrind] 无法读取本次错误，未采集：' + message + '\n')
+                self.failure = '无法读取本次错误，未采集：' + message
+                gdb.write('[AiValgrind] ' + self.failure + '\n')
                 return
             identity = capture_identity(message)
             if identity in self.seen:
                 self.last_count = count
+                self.resume_allowed = True
                 return
             snapshot = {'captured_at': datetime.now(timezone.utc).isoformat(),
                         'requested_error_id': _capture_config['requested_error_id'],
@@ -414,20 +426,41 @@ class AutoValueCapture:
                 for variable in row.get('variables', []):
                     gdb.write('#%s %s = %s\n' % (row['index'], variable['name'], variable['value'][:256]))
                     gdb.write('  初始化状态：' + initialization_summary(variable['initialization']) + '\n')
-            gdb.write('现场保持暂停；continue 继续，quit 退出。\n')
+            self.resume_allowed = True
+            self.failure = ''
+            gdb.write('现场已保存，自动继续。\n' if _capture_config.get('auto_continue') else '现场保持暂停；continue 继续，quit 退出。\n')
         except CaptureDisconnected as exc:
             self.connection_failed(exc)
         except Exception as exc:
             if disconnected(str(exc)):
                 self.connection_failed(exc)
             else:
-                gdb.write('[AiValgrind] 采集失败，现场保持暂停: ' + str(exc) + '\n')
+                self.failure = '采集失败: ' + str(exc)
+                action = '；自动分析已停止' if _capture_config.get('auto_continue') else '；现场保持暂停'
+                gdb.write('[AiValgrind] ' + self.failure + action + '\n')
         finally:
             self.active = False
+
+    def run_to_completion(self):
+        # Resume only after the stop callback returns: never recursively continue
+        # from a GDB event handler or queue a continuation past a user interrupt.
+        while True:
+            self.resume_allowed = False
+            self.stop_reason = ''
+            gdb.execute('continue')
+            if self.failure:
+                raise gdb.GdbError(self.failure)
+            if not gdb.selected_inferior().threads():
+                gdb.write('[AiValgrind] 程序已结束，自动采集完成，共保存 %d 个首次现场。\n' % self.sequence)
+                return
+            if not self.resume_allowed:
+                raise gdb.GdbError('自动分析已停止：' + (self.stop_reason or '未识别的停止原因') +
+                                   '；已保存的结果保留。需要交互检查时使用 --pause-on-error。')
 
     def connection_failed(self, exc):
         self.last_count = float('inf')  # Never retry queries on a dead connection.
         message = 'GDB 与 Valgrind 连接中断，已停止变量采集；请查看 valgrind.log。\n' + str(exc)
+        self.failure = message
         Path(_capture_config['directory'], 'connection-error.txt').write_text(message, encoding='utf-8')
         gdb.write('[AiValgrind] ' + message + '\n由外部脚本退出并清理调试进程。\n')
 

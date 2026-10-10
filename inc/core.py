@@ -431,7 +431,9 @@ def breakpoint_command(frame):
     return "break -function " + gdb_quote(frame["fn"])
 
 
-def debug_commands(frame, pid, prefix, vgdb, project=None, stop_on_error=False, capture_script=None):
+def debug_commands(frame, pid, prefix, vgdb, project=None, stop_on_error=False, capture_script=None, auto_continue=False):
+    if auto_continue and not capture_script:
+        raise ValueError('自动继续需要变量采集脚本')
     commands = ["set pagination off", "set confirm off", "set breakpoint pending on", "set remotetimeout 30"]
     if project:
         commands.append("directory " + gdb_quote(str(Path(project).resolve())))
@@ -443,17 +445,18 @@ def debug_commands(frame, pid, prefix, vgdb, project=None, stop_on_error=False, 
                      "python exec(compile(open(" + repr(str(capture_script)) + ", encoding='utf-8').read(), 'aivalgrind-capture', 'exec'))"]
     else:
         commands.append(breakpoint_command(frame))
-    commands += ["monitor v.set vgdb-error " + ("1" if stop_on_error or capture_script else "999999999"), "continue"]
+    commands += ["monitor v.set vgdb-error " + ("1" if stop_on_error or capture_script else "999999999"),
+                 "python _aivalgrind_capture.run_to_completion()" if auto_continue else "continue"]
     return commands
 
 
-def prepare_capture(directory, requested_error_id):
+def prepare_capture(directory, requested_error_id, *, auto_continue=False):
     """Each invocation gets its own directory; no previous capture is overwritten."""
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     session = Path(tempfile.mkdtemp(prefix="session-", dir=str(directory)))
     register_capture(session)
-    config = {"directory": str(session), "requested_error_id": requested_error_id}
+    config = {"directory": str(session), "requested_error_id": requested_error_id, "auto_continue": auto_continue}
     script = session / "capture.py"
     script.write_text("_capture_config = " + repr(config) + "\n" + GDB_CAPTURE_SCRIPT, encoding="utf-8")
     return session, script
@@ -504,9 +507,12 @@ def prepare_navigation(folder, errors, error, frame, auto_values):
 
 
 def _run_debug(error, args, processes):
-    if not sys.stdin.isatty():
-        raise ValueError("GDB 需要交互终端；请在终端中运行 debug 或 serve")
     auto_values = getattr(args, "auto_values", False)
+    auto_continue = getattr(args, "auto_continue", False)
+    if auto_continue and not auto_values:
+        raise ValueError("自动继续需要同时启用自动变量采集")
+    if not auto_continue and not sys.stdin.isatty():
+        raise ValueError("GDB 需要交互终端；请在终端中运行 debug 或 serve")
     try:
         frame = pick_frame(error, args.frame)
     except ValueError:
@@ -515,7 +521,7 @@ def _run_debug(error, args, processes):
         frame = {}
     if not auto_values:
         breakpoint_command(frame)  # Validate before launching the target.
-    navigation_enabled = bool(getattr(args, 'navigation_errors', None))
+    navigation_enabled = not auto_continue and bool(getattr(args, 'navigation_errors', None))
     if auto_values or navigation_enabled:
         debugger_path = shutil.which('gdb')
         print('正在检查 GDB 的 Python 支持（最多等待 5 秒）: ' + debugger_path, flush=True)
@@ -559,8 +565,9 @@ def _run_debug(error, args, processes):
     print("\n调试 " + error["id"] + " · " + error["what"], flush=True)
     capture_script = None
     if auto_values:
-        session, capture_script = prepare_capture(args.capture_dir, error["id"])
-        print("自动采集模式：跳过源码断点，在实际内存错误处暂停并保存变量。\n采集目录: " + str(session), flush=True)
+        session, capture_script = prepare_capture(args.capture_dir, error["id"], auto_continue=auto_continue)
+        mode = "保存现场后自动继续至程序结束" if auto_continue else "保存现场后暂停，等待 continue 或 quit"
+        print("自动采集模式：跳过源码断点，" + mode + "。\n采集目录: " + str(session), flush=True)
     else:
         print("断点: " + breakpoint_command(frame), flush=True)
     if error["kind"].startswith("Leak_"):
@@ -577,7 +584,7 @@ def _run_debug(error, args, processes):
                                "--log-file=" + str(log_path)] + (["--read-var-info=yes"] if auto_values else []) + command,
                               cwd=cwd, stdin=target_input, start_new_session=True)
         try:
-            commands = debug_commands(frame, vg.pid, prefix, shutil.which("vgdb"), args.project_dir, args.stop_on_error, capture_script)
+            commands = debug_commands(frame, vg.pid, prefix, shutil.which("vgdb"), args.project_dir, args.stop_on_error, capture_script, auto_continue=auto_continue)
             restart = None
             if navigation_enabled:
                 navigation, restart = prepare_navigation(folder, args.navigation_errors, error, frame,
@@ -588,8 +595,9 @@ def _run_debug(error, args, processes):
             script = Path(folder) / "session.gdb"
             script.write_text("\n".join(commands) + "\n", encoding="utf-8")
             # -nx/-nh avoids executing unexpected personal GDB startup files.
-            print('正在连接 GDB；连接后程序将运行到断点，耗时取决于程序执行路径。Ctrl+C 可退出并清理进程。', flush=True)
+            print('正在连接 GDB；' + ('自动采集至程序结束。' if auto_continue else '连接后程序将运行到断点。') + 'Ctrl+C 可退出并清理进程。', flush=True)
             gdb = processes.launch([shutil.which("gdb"), "-q", "-nx", "-nh", "-iex", "set auto-load off",
+                                    *(["-batch", "-return-child-result"] if auto_continue else []),
                                     "-x", str(script), "--args"] + command, cwd=cwd)
             while True:
                 try:

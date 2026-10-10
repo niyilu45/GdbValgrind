@@ -79,6 +79,80 @@ class CaptureTests(unittest.TestCase):
         self.collector.on_stop(None)
         self.assertEqual(len(list(self.root.glob('*.json'))), 2)
 
+    def automatic_run(self, stops, monitor=None):
+        self.scope['_capture_config']['auto_continue'] = True
+        self.gdb.GdbError = RuntimeError
+        running = [True]
+        pending = iter(stops)
+        self.continues = 0
+        self.gdb.selected_inferior = lambda: SimpleNamespace(threads=lambda: [1] if running[0] else [])
+        def execute(command, **kwargs):
+            if command != 'continue':
+                return (monitor or self.execute)(command, **kwargs)
+            self.continues += 1
+            self.assertLess(self.continues, 10, 'must not loop on an unknown stop')
+            stop = next(pending, None)
+            if stop is None:
+                running[0] = False
+            else:
+                self.count, event, line = stop
+                self.error = self.error.replace('demo.c:9', 'demo.c:' + str(line))
+                self.collector.on_stop(event)
+        self.gdb.execute = execute
+        self.collector.run_to_completion()
+
+    def test_automatic_capture_continues_through_unique_and_duplicate_errors(self):
+        event = SimpleNamespace(stop_signal='SIGTRAP')
+        self.automatic_run([(1, event, 9), (2, event, 9), (3, event, 10)])
+        self.assertEqual(self.continues, 4)
+        self.assertEqual(len(list(self.root.glob('error-*.json'))), 2)
+        self.assertFalse(any('现场保持暂停' in msg for msg in self.messages))
+        self.assertTrue(any('自动采集完成' in msg for msg in self.messages))
+
+    def test_automatic_replay_without_errors_exits(self):
+        self.automatic_run([])
+        self.assertEqual(self.continues, 1)
+        self.assertFalse(list(self.root.glob('error-*.json')))
+
+    def test_automatic_does_not_swallow_signals_or_breakpoints(self):
+        for event in (SimpleNamespace(stop_signal='SIGINT'), SimpleNamespace(stop_signal='SIGSEGV'),
+                      SimpleNamespace(breakpoints=[object()])):
+            with self.subTest(event=event), self.assertRaisesRegex(RuntimeError, '自动分析已停止'):
+                self.automatic_run([(1, event, 9)])
+            self.assertEqual(self.continues, 1)
+            self.assertFalse(list(self.root.glob('error-*.json')))
+
+    def test_automatic_unknown_stop_does_not_loop(self):
+        with self.assertRaisesRegex(RuntimeError, '自动分析已停止'):
+            self.automatic_run([(0, None, 9)])
+        self.assertEqual(self.continues, 1)
+
+    def test_automatic_monitor_failure_exits_instead_of_waiting(self):
+        with self.assertRaisesRegex(RuntimeError, '无法读取错误计数'):
+            self.automatic_run([(1, None, 9)], monitor=lambda *args, **kwargs: 'unsupported command')
+        self.assertEqual(self.continues, 1)
+
+    def test_automatic_save_failure_is_reported(self):
+        with patch.object(Path, 'write_text', side_effect=OSError('disk full')):
+            with self.assertRaisesRegex(RuntimeError, 'disk full'):
+                self.automatic_run([(1, None, 9)])
+        self.assertEqual(self.continues, 1)
+
+    def test_automatic_disconnect_is_not_resumed(self):
+        def monitor(command, **kwargs):
+            raise RuntimeError('Connection reset by peer')
+        with self.assertRaisesRegex(RuntimeError, 'Connection reset by peer'):
+            self.automatic_run([(1, None, 9)], monitor=monitor)
+        self.assertEqual(self.continues, 1)
+        self.assertTrue((self.root / 'connection-error.txt').exists())
+
+    def test_automatic_commands_use_driver_only_when_requested(self):
+        _, script = av.prepare_capture(self.root / 'auto', 'test', auto_continue=True)
+        self.assertIn("'auto_continue': True", script.read_text(encoding='utf-8'))
+        commands = av.debug_commands({}, 42, '/tmp/test', '/usr/bin/vgdb', capture_script=script, auto_continue=True)
+        self.assertEqual(commands[-1], 'python _aivalgrind_capture.run_to_completion()')
+        self.assertFalse(any(command.startswith('break ') for command in commands))
+
     def test_memory_relations(self):
         facts = self.scope['memory_facts']
         self.assertEqual(facts('Invalid read of size 8\nAddress 0x123 is 4 bytes before a block of size 1,024 alloc\'d')['block_bytes'], 1024)

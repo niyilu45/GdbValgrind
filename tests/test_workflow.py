@@ -8,7 +8,7 @@ from tests.test_aivalgrind import error
 
 
 class WorkflowTests(unittest.TestCase):
-    def run_case(self, *, saved=False, interrupted=False, errors=True, unsupported=False, report_interrupted=False, project=False):
+    def run_case(self, *, saved=False, interrupted=False, errors=True, unsupported=False, report_interrupted=False, project=False, pause=False, tty=True):
         with tempfile.TemporaryDirectory() as root:
             output = Path(root) / 'new-run'
             xml = Path(root) / 'saved.xml'
@@ -28,7 +28,7 @@ class WorkflowTests(unittest.TestCase):
                 if interrupted:
                     raise KeyboardInterrupt()
                 return 0
-            with patch.object(workflow.core, 'check_debug_environment'), patch.object(workflow.sys.stdin, 'isatty', return_value=True), patch.object(workflow.shutil, 'which', return_value='/usr/bin/gdb'), patch.object(workflow, 'ProcessSession', return_value=manager), patch.object(workflow.core, 'load_report', return_value=report), patch.object(workflow, 'collect_run', side_effect=collect) as first, patch.object(workflow.core, 'save_report', wraps=workflow.core.save_report, side_effect=KeyboardInterrupt() if report_interrupted else None), patch.object(workflow, 'debug_error', side_effect=debug) as replay:
+            with patch.object(workflow.core, 'check_debug_environment'), patch.object(workflow.sys.stdin, 'isatty', return_value=tty), patch.object(workflow.shutil, 'which', return_value='/usr/bin/gdb'), patch.object(workflow, 'ProcessSession', return_value=manager), patch.object(workflow.core, 'load_report', return_value=report), patch.object(workflow, 'collect_run', side_effect=collect) as first, patch.object(workflow.core, 'save_report', wraps=workflow.core.save_report, side_effect=KeyboardInterrupt() if report_interrupted else None), patch.object(workflow, 'debug_error', side_effect=debug) as replay:
                 if interrupted or unsupported or report_interrupted:
                     with self.assertRaises(KeyboardInterrupt if interrupted or report_interrupted else ValueError):
                         workflow.analyze_run(['/srv/app'], output)
@@ -36,7 +36,7 @@ class WorkflowTests(unittest.TestCase):
                     if unsupported:
                         first.assert_not_called()
                 else:
-                    self.assertEqual(workflow.analyze_run([] if saved else ['/srv/app'], output, xml_path=xml if saved else None, project_dir=root if project else None), 0)
+                    self.assertEqual(workflow.analyze_run([] if saved else ['/srv/app'], output, xml_path=xml if saved else None, project_dir=root if project else None, pause_on_error=pause), 0)
                     html = (output / 'report.html').read_text(encoding='utf-8')
                     self.assertIn('report-data', html)
                     if project:
@@ -46,6 +46,8 @@ class WorkflowTests(unittest.TestCase):
                     self.assertFalse((output / 'report.html.tmp').exists())
                     self.assertEqual(first.call_count, 0 if saved else 1)
                     self.assertEqual(replay.call_count, 1 if errors else 0)
+                    if errors:
+                        self.assertEqual(replay.call_args.args[2].auto_continue, not pause)
                     if saved and errors:
                         options = replay.call_args.args[2]
                         self.assertEqual(options.command, ('/srv/app', 'arg'))
@@ -61,3 +63,6 @@ class WorkflowTests(unittest.TestCase):
 
     def test_report_interrupt_never_starts_replay(self): self.run_case(report_interrupted=True)
     def test_report_contains_source_context(self): self.run_case(project=True)
+
+    def test_default_automatic_analysis_without_tty(self): self.run_case(saved=True, tty=False)
+    def test_pause_mode_preserves_interactive_debugging(self): self.run_case(pause=True)

@@ -59,7 +59,7 @@ python3.9 aivalgrind.py analyze --xml run-first/errors.xml --output-dir run-valu
 
 两种方式都会生成 HTML，并直接进入自动变量采集，不必打开网页再选择错误。输出目录可复用，自动清理清单登记的旧结果，其他文件保持不变。已有外部 XML 缺少程序信息时，在第二条命令末尾补 `-- /path/to/program 参数`；`--cwd` 和 `--stdin-file` 可用于指定工作目录及重放标准输入。
 
-“自动采集”指自动读取并保存每个错误首次出现时的变量，不是无人值守执行：保存现场后停在 `(gdb)`，输入 `continue` 查看后续错误，输入 `quit` 结束。首次报告只提供复现依据，实际暂停和保存的是新运行触发的错误，不能恢复首次运行的旧变量值。一次启动流程中按 Ctrl+C 会结束整个流程，不会自动开始第二次运行；之后可使用分步方式读取保留的 XML。公开库函数为 `inc.analyze_run(...)`，核心实现在 `inc/workflow.py`。
+analyze 第三步默认连续执行：自动读取并保存每个错误首次出现时的变量，保存后自动继续，重复错误不重复保存，程序结束后自动退出 GDB，无需输入 continue。采集失败、连接中断或非内存错误导致的异常停止会明确报错并结束，不会留在 GDB 等待输入。需要手动检查现场时，给 analyze 添加 `--pause-on-error`：保存后停在 `(gdb)`，输入 `continue` 继续，输入 `quit` 结束。普通 debug 和网页选择错误调试仍保留交互行为。首次报告只提供复现依据，实际暂停和保存的是新运行触发的错误，不能恢复首次运行的旧变量值。一次启动流程中按 Ctrl+C 会结束整个流程，不会自动开始第二次运行；之后可使用分步方式读取保留的 XML。公开库函数为 `inc.analyze_run(...)`，核心实现在 `inc/workflow.py`。
 
 ```text
 inc/
@@ -118,7 +118,7 @@ options = DebugOptions(
 serve_report(report, options=options, port=8765)
 ```
 
-公开接口为 `DebugOptions`、`load_report`、`render_html`、`export_report`、`debug_error`、`serve_report`、`collect_run`。库函数失败时抛出异常，不会调用 `sys.exit`；仅导入库不会启动服务或进程。`debug_error` 返回 GDB 退出码；`serve_report` 会阻塞到 Ctrl+C，应在主线程中调用。调试仍需要 Linux 交互终端；不传 `options` 的 `serve_report(report)` 只提供浏览。
+公开接口为 `DebugOptions`、`load_report`、`render_html`、`export_report`、`debug_error`、`serve_report`、`collect_run`。库函数失败时抛出异常，不会调用 `sys.exit`；仅导入库不会启动服务或进程。`debug_error` 返回 GDB 退出码；`serve_report` 会阻塞到 Ctrl+C，应在主线程中调用。调试需要 Linux；analyze 默认自动运行，也支持无交互终端。手动调试及 `--pause-on-error` 需要交互终端；不传 `options` 的 `serve_report(report)` 只提供浏览。
 
 `browse` 启动后，请保留提供网页服务的 SSH 终端。在网页选中错误，点击“生成调试命令”并复制；另开一个连接同一台 Linux 服务器的 SSH 终端，把完整命令粘贴到普通 Shell 中执行。等出现 `(gdb)` 后，才可以输入 `bt`（调用栈）、`info locals`（局部变量）、`print 变量名`（替换为实际变量）、`continue`（继续）或 `quit`（结束本次调试）。网页的“复制继续命令”得到的 `aiv-goto …` 也必须粘贴到已有会话的 `(gdb)` 中，不能在 Shell 中执行。`browse` 只提供网页服务；需要保存离线 HTML 请使用 `report`。
 
@@ -286,7 +286,7 @@ python3 aivalgrind.py debug errors.xml -p . --error 错误ID \
 - Valgrind 原始错误、访问地址和访问大小，以及可获得的分配/释放位置。
 - 当 Valgrind 给出内存块边界时，解释块首/块尾越界或访问已释放内存；无法确定数组下标或期望值时不猜测。
 
-同一会话内，相同错误诊断和调用路径只保存第一次现场及变量值。去重忽略十六进制地址、进程及线程编号，保留错误类型、访问大小和各调用位置；不同调用路径仍分别保存。后续重复错误不覆盖原文件、不再次打印变量。它们仍可能让 GDB 暂停，使用 `continue` 继续；此模式不会自动接管后续执行。
+同一会话内，相同错误诊断和调用路径只保存第一次现场及变量值。去重忽略十六进制地址、进程及线程编号，保留错误类型、访问大小和各调用位置；不同调用路径仍分别保存。后续重复错误不覆盖原文件、不再次打印变量。在 debug / serve 的交互模式或 analyze --pause-on-error 中，它们仍可能让 GDB 暂停，使用 `continue` 继续；analyze 默认会自动继续，不等待输入。
 
 每次调试创建独立会话目录：
 

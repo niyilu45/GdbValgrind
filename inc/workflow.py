@@ -1,4 +1,4 @@
-"""One-command or saved-report entry to interactive automatic value capture."""
+"""One-command or saved-report entry to automatic value capture."""
 from pathlib import Path
 import shutil
 import subprocess
@@ -14,15 +14,15 @@ from .store import load_replay
 
 
 def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=None, stdin_file=None, live_port=None,
-                plain_terminal=False, output_mode='pty', runtime_info=None):
+                plain_terminal=False, output_mode='pty', runtime_info=None, pause_on_error=False):
     """Collect if needed, load error locations, then replay with value capture.
 
-    Stops at each runtime error in GDB; continue/quit remain interactive.
+    Capture and continue by default; pause_on_error opts into interactive GDB.
     Ctrl+C aborts the workflow and never starts a new replay.
     """
     directory = Path(output_dir).resolve()
     source = Path(xml_path).resolve() if xml_path else None
-    print('analyze 流程版本: SQLite 分页 / 步骤 2 自动生成完整 HTML\n运行代码: ' + str(Path(__file__).resolve()),flush=True)
+    print('analyze 流程版本: SQLite 分页 / 步骤 2 自动生成完整 HTML / 步骤 3 默认自动继续\n运行代码: ' + str(Path(__file__).resolve()),flush=True)
     report = None
     if source:
         print('正在解析已有 XML 和错误位置（不等待源码或 blame）……', flush=True)
@@ -40,8 +40,8 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
     if not command:
         raise ValueError('请在 -- 后提供程序及参数；已有 XML 时也可从配套采集记录自动读取')
     core.check_debug_environment()
-    if not sys.stdin.isatty():
-        raise ValueError('自动变量采集需要交互式 Linux / SSH 终端')
+    if pause_on_error and not sys.stdin.isatty():
+        raise ValueError('--pause-on-error 需要交互式 Linux / SSH 终端')
     print('预检查：确认 GDB 支持 Python，避免首次运行结束后才发现无法采集（最多 5 秒）。', flush=True)
     with ProcessSession() as processes:
         probe = processes.launch([shutil.which('gdb'), '-q', '-nx', '-nh', '-batch', '-ex', 'python import gdb'],
@@ -82,7 +82,10 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
         print('报告中没有已完整记录的内存错误，不启动复现采集。', flush=True)
         return 0
     print('步骤 3/3：重新运行并自动保存实际错误处的变量；无需网页点击或输入错误 ID。', flush=True)
-    print('采集后停在 (gdb)：continue 继续到后续错误，quit 退出；Ctrl+C 终止整个流程。', flush=True)
+    if pause_on_error:
+        print('采集后停在 (gdb)：continue 继续到后续错误，quit 退出；Ctrl+C 终止整个流程。', flush=True)
+    else:
+        print('保存现场后自动继续，程序结束后自动退出；无需输入 continue。Ctrl+C 终止整个流程。', flush=True)
     options = DebugOptions(command, cwd=cwd, stdin_file=stdin_file, auto_values=True,
-                           capture_dir=directory / 'captures')
+                           capture_dir=directory / 'captures', auto_continue=not pause_on_error)
     return debug_error(report, report['errors'][0]['id'], options)
