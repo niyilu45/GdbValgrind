@@ -70,11 +70,19 @@ class PagedHandler(Handler):
                     if not row['ready']:
                         owner.request(row['id'])
                     item = issue_data(row)
+                    # Raw database entries are parsed without source enrichment.
+                    # That must not be presented as a missing user argument.
+                    if owner.report.get('project'):
+                        for stack in item['stacks']:
+                            for frame in stack['frames']:
+                                if not frame.get('source') and frame.get('source_note') == '未指定工程目录':
+                                    frame['source_note'] = '源码尚在后台加载' if not row['ready'] else '该栈帧未找到可用源码'
                     with owner.files_lock:
                         # Only file IDs referenced by this detail need to travel.
                         ids = {f.get('source_file_id') for s in item['stacks'] for f in s['frames']}
                         files = {k:v for k,v in owner.source_files.items() if k in ids}
-                    payload = browser_report({'errors':[item], 'source_files':files},compact=True)
+                    payload = browser_report({'errors':[item], 'source_files':files,
+                                              'project':owner.report.get('project',''), 'source_pending':not bool(row['ready'])},compact=True)
                     return self.reply(200, {'report':payload,'ready':bool(row['ready'])})
         except (ValueError, OSError) as exc:
             return self.reply(400, {'message': str(exc)})

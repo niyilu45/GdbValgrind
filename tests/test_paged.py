@@ -98,6 +98,9 @@ class PagedTests(unittest.TestCase):
                 detail=get('/api/issue?id='+data['errors'][0]['id'])
                 self.assertFalse(detail['ready'])
                 self.assertTrue(detail['report']['errors'][0]['stacks'])
+                self.assertEqual(detail['report']['project'],directory)
+                self.assertTrue(detail['report']['source_pending'])
+                self.assertEqual(detail['report']['errors'][0]['stacks'][0]['frames'][0]['source_note'],'源码尚在后台加载')
             self.assertFalse(live.worker.is_alive())
 
     def test_author_only_innermost_and_reachable_count_excluded(self):

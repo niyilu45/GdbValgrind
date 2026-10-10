@@ -13,7 +13,7 @@ class Element{
 }
 for(const id of ['report-data','nav','search','fileFilter','authorFilter','resetFilters','listCount','list','detail','file','mode','notice']){const e=new Element('div');e.id=id}
 ids.get('report-data').textContent=html.match(/<script id="report-data" type="application\/json">([\s\S]*?)<\/script>/)[1];
-const issue={id:'one',kind:'InvalidWrite',what:'write error',count:1,records:1,stacks:[{frames:[{file:'a.c',line:'1',source_ref:0}]}]};
+const issue={id:'one',kind:'InvalidWrite',what:'write error',count:1,records:1,stacks:[{frames:[{file:'a.c',line:'1',source_ref:0},{file:'a.c',line:'2',source_ref:0}]}]};
 const timers=[];
 const context=vm.createContext({document:{getElementById:id=>ids.get(id),createElement:t=>new Element(t),createTextNode:t=>{const e=new Element('text');e.textContent=t;return e}},
  Option:function(t,v){const e=new Element('option');e.textContent=t;e.value=v;return e},URLSearchParams,AbortController,
@@ -33,6 +33,14 @@ const settle=async()=>{for(let i=0;i<4;i++)await new Promise(r=>setImmediate(r))
  assert(ids.get('detail').textContent.includes('int x;'),'failed detail refresh preserves code');
  assert(ids.get('detailRetry'),'retry action is available');
  failDetail=false;ids.get('detailRetry').children.at(-1).onclick();await settle();
+ const frames=ids.get('detail').children.filter(n=>n.dataset.frameKey);
+ frames[0].open=false;frames[1].open=true;
+ issue.count=2;firstRow.onclick();await settle();
+ const updatedFrames=ids.get('detail').children.filter(n=>n.dataset.frameKey);
+ assert.equal(updatedFrames[0].open,false,'manually collapsed frame stays collapsed');
+ assert.equal(updatedFrames[1].open,true,'expanded parent frame survives refreshed detail');
+ ids.get('showBlame').checked=false;ids.get('showBlame').onchange();
+ assert.equal(ids.get('detail').children.filter(n=>n.dataset.frameKey)[1].open,true,'blame toggle preserves expansion');
  ids.get('list').afterNode.children[1].onclick();await settle();assert(requests.some(u=>u.includes('offset=100')));
  ids.get('authorFilter').value='author:Alice';ids.get('authorFilter').onchange();await settle();assert(requests.some(u=>u.includes('author=author%3AAlice')&&u.includes('offset=0')));
  assert(ids.get('nav').children[1].className==='danger-kind');
