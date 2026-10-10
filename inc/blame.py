@@ -4,6 +4,7 @@ import re
 import shutil
 import subprocess
 import time
+from .gitprocess import run_git
 
 _cache = {}
 
@@ -14,7 +15,7 @@ class BlameRows(dict):
         self.note = note
 
 
-def source_blame(path, start, end, timeout=5):
+def source_blame(path, start, end, timeout=5, checkpoint=None):
     try:
         stat = path.stat()
         key = (str(path), stat.st_mtime_ns, stat.st_size)
@@ -25,10 +26,9 @@ def source_blame(path, start, end, timeout=5):
         git = shutil.which('git')
         if not git:
             return BlameRows('未安装 Git 或 PATH 中找不到 Git')
-        result = subprocess.run([git, '--no-pager', '-C', str(path.parent),
+        result = run_git([git, '--no-pager', '-C', str(path.parent),
                                  'blame', '--line-porcelain', '-L', '%d,%d' % (start, end), '--', path.name],
-                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                timeout=timeout, text=True, encoding='utf-8', errors='replace')
+                         timeout=timeout, checkpoint=checkpoint)
         rows, current, number = {}, {}, None
         if result.returncode != 0:
             reason = getattr(result, 'stderr', '').strip().replace('\n', ' ')[:250]

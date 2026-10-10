@@ -20,14 +20,14 @@ class BlameTests(unittest.TestCase):
         with patch('inc.blame.shutil.which', return_value=None):
             self.assertEqual(source_blame(self.path, 1, 1), {})
         for failure in (OSError('missing'), subprocess.TimeoutExpired('git', 2)):
-            with patch('inc.blame.shutil.which', return_value='/git'), patch('inc.blame.subprocess.run', side_effect=failure):
+            with patch('inc.blame.shutil.which', return_value='/git'), patch('inc.blame.run_git', side_effect=failure):
                 self.assertEqual(source_blame(self.path, 1, 1), {})
-        with patch('inc.blame.shutil.which', return_value='/git'), patch('inc.blame.subprocess.run', return_value=SimpleNamespace(returncode=128, stdout='')):
+        with patch('inc.blame.shutil.which', return_value='/git'), patch('inc.blame.run_git', return_value=SimpleNamespace(returncode=128, stdout='')):
             self.assertEqual(source_blame(self.path, 1, 1), {})
 
     def test_line_metadata_and_uncommitted_changes(self):
         output = 'a'*40 + ' 1 1 1\nauthor Alice\nauthor-time 0\nsummary first change\n\tint x;\n' + '0'*40 + ' 2 2 1\nauthor Not Committed Yet\n\tint y;\n'
-        with patch('inc.blame.shutil.which', return_value='/git'), patch('inc.blame.subprocess.run', return_value=SimpleNamespace(returncode=0, stdout=output)) as run:
+        with patch('inc.blame.shutil.which', return_value='/git'), patch('inc.blame.run_git', return_value=SimpleNamespace(returncode=0, stdout=output)) as run:
             result = source_blame(self.path, 1, 2)
             self.assertEqual(result[1]['author'], 'Alice')
             self.assertEqual(result[1]['summary'], 'first change')
@@ -54,7 +54,7 @@ class BlameTests(unittest.TestCase):
 
     def test_failed_query_is_retried_next_time(self):
         good = 'a'*40 + ' 1 1 1\nauthor Alice\n\tint x;\n'
-        with patch('inc.blame.shutil.which', return_value='/git'), patch('inc.blame.subprocess.run', side_effect=[SimpleNamespace(returncode=128, stdout=''), SimpleNamespace(returncode=0, stdout=good)]) as run:
+        with patch('inc.blame.shutil.which', return_value='/git'), patch('inc.blame.run_git', side_effect=[SimpleNamespace(returncode=128, stdout=''), SimpleNamespace(returncode=0, stdout=good)]) as run:
             self.assertEqual(source_blame(self.path, 1, 1), {})
             self.assertIn(1, source_blame(self.path, 1, 1))
             self.assertEqual(run.call_count, 2)
@@ -66,3 +66,16 @@ class BlameTests(unittest.TestCase):
             for line in (15, 75, 15):
                 sources.enrich({'file': self.path.name, 'line': str(line)})
             self.assertEqual([call.args[1:] for call in blame.call_args_list], [(5, 25), (65, 85)])
+
+    def test_progress_can_cancel_before_blame(self):
+        stages = []
+        def progress(text):
+            stages.append(text)
+            if 'git blame' in text:
+                raise KeyboardInterrupt()
+        sources = Sources(self.path.parent, progress=progress)
+        with patch('inc.core.source_blame') as blame:
+            with self.assertRaises(KeyboardInterrupt):
+                sources.enrich({'file': self.path.name, 'line': '1'})
+            blame.assert_not_called()
+        self.assertTrue(any(str(self.path) in stage for stage in stages))

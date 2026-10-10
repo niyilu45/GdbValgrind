@@ -53,7 +53,8 @@ def diagnostic_label(text):
 
 class Sources:
     """Resolve only files within the explicitly supplied project directory."""
-    def __init__(self, root=None):
+    def __init__(self, root=None, progress=None):
+        self.progress = progress or (lambda text: None)
         self.root = Path(root).resolve() if root else None
         self.index = None
         self.cache = {}
@@ -77,6 +78,7 @@ class Sources:
         if self.index is None:
             self.index = {}
             for directory, dirs, files in os.walk(self.root):
+                self.progress('查找源码目录: ' + directory)
                 dirs[:] = [d for d in dirs if d not in {".git", ".svn", "node_modules", ".venv", "__pycache__"}]
                 for name in files:
                     self.index.setdefault(name, []).append(Path(directory) / name)
@@ -85,6 +87,7 @@ class Sources:
         return matches[0] if len(matches) == 1 else None
 
     def enrich(self, frame):
+        self.progress('定位源码: ' + str(frame.get('file', '无文件')))
         path = self.resolve(frame)
         if not path:
             frame["source_note"] = "源码未找到或文件名不唯一" if self.root else "未指定工程目录"
@@ -92,6 +95,7 @@ class Sources:
         frame["local_file"] = str(path)
         try:
             if path not in self.cache:
+                self.progress('读取源码: ' + str(path))
                 self.cache[path] = path.read_text(encoding="utf-8", errors="replace").splitlines()
             lines = self.cache[path]
             key = hashlib.sha256(str(path).encode('utf-8')).hexdigest()[:16]
@@ -105,7 +109,10 @@ class Sources:
             start, end = frame['source'][0]['number'], frame['source'][-1]['number']
             blame_key = (path, start, end)
             if blame_key not in self.blame_cache:
-                self.blame_cache[blame_key] = source_blame(path, start, end)
+                self.progress('查询 git blame（单次最多 5 秒）: %s:%s-%s' % (path, start, end))
+                self.blame_cache[blame_key] = source_blame(path, start, end,
+                    checkpoint=lambda: self.progress('等待 git blame（q 可退出）: %s:%s-%s' % (path, start, end)))
+                self.progress('已完成 git blame: %s:%s-%s' % (path, start, end))
             attribution = self.blame_cache[blame_key]
             for row in frame['source']:
                 blame = attribution.get(row['number'])
@@ -145,7 +152,7 @@ def load_report(xml_path, project=None, allow_partial=True):
     return report
 
 
-def report_from_root(root, xml_path, project=None, xml_complete=True):
+def report_from_root(root, xml_path, project=None, xml_complete=True, progress=None):
     counts = {}
     for pair in root.findall("errorcounts/pair"):
         uid = pair.findtext("unique", "")
@@ -186,7 +193,7 @@ def report_from_root(root, xml_path, project=None, xml_complete=True):
         item["unique_ids"].append(uid)
         item["leaked_bytes"] += integer(error.findtext("xwhat/leakedbytes"))
         item["leaked_blocks"] += integer(error.findtext("xwhat/leakedblocks"))
-    sources = Sources(project)
+    sources = Sources(project, progress=progress)
     errors = list(grouped.values())
     for error in errors:
         for stack in error["stacks"]:

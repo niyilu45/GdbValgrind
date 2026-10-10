@@ -129,7 +129,18 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
             last_summary = payload
             if live is not None:
                 phase('正在生成网页报告（包含源码）')
-                detailed = report_from_root(stream.root, xml_path, project_dir, xml_complete=stream.complete)
+                last_report_stage = [None]
+                def report_progress(text):
+                    if text != last_report_stage[0]:
+                        watchdog.mark(text)
+                        last_report_stage[0] = text
+                    if display is not None:
+                        display.check_quit()
+                        if display.active:
+                            display.set_phase(text)
+                # A cancelled report must not start the same slow Git/source work again.
+                detailed = report_from_root(stream.root, xml_path, project_dir if state != 'interrupted' else None, xml_complete=stream.complete,
+                                            progress=report_progress)
                 if retry_blame and not changed:
                     blame_retries += 1
                 missing = any('blame' not in row for error in detailed['errors'] for stack in error['stacks']
@@ -137,6 +148,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
                 next_blame_retry = time.monotonic() + 15 if missing and blame_retries < 3 else float('inf')
                 detailed['debug_command'] = command_metadata(stream.root, xml_path, project_dir)
                 live.update(detailed, state)
+                report_progress('正在序列化并保存 HTML（源码和 blame 已处理）')
                 saved = directory / 'report.html.tmp'
                 saved.write_text(render_html(detailed, source_base=None), encoding='utf-8')
                 os.replace(saved, directory / 'report.html')
