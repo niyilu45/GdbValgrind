@@ -37,6 +37,7 @@ const settle=async()=>{for(let i=0;i<4;i++)await new Promise(r=>setImmediate(r))
  frames[0].open=false;frames[1].open=true;
  issue.count=2;firstRow.onclick();await settle();
  const updatedFrames=ids.get('detail').children.filter(n=>n.dataset.frameKey);
+ assert.strictEqual(updatedFrames[1],frames[1],'unchanged parent code DOM is reused during refresh');
  assert.equal(updatedFrames[0].open,false,'manually collapsed frame stays collapsed');
  assert.equal(updatedFrames[1].open,true,'expanded parent frame survives refreshed detail');
  ids.get('showBlame').checked=false;ids.get('showBlame').onchange();

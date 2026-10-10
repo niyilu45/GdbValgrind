@@ -17,6 +17,40 @@ from tests.test_aivalgrind import error, frame
 
 
 class PagedTests(unittest.TestCase):
+    def test_parent_blame_published_before_next_frame_finishes(self):
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as cleanup:
+            store = ErrorStore(Path(directory)/'results.sqlite3', 'errors.xml')
+            cleanup.callback(store.close)
+            store.accept(ET.fromstring(error('1', frames=frame()+frame(line=30)+frame(line=40))))
+            store.commit()
+            base = report_from_root(ET.Element('valgrindoutput'), 'errors.xml')
+            base['project'] = directory
+            entered = threading.Event()
+            def enrich(sources, f, with_blame=True):
+                if with_blame and f['line'] == '40':
+                    entered.set()
+                    while True:
+                        sources.progress('waiting')
+                        time.sleep(0.01)
+                f['source'] = [{'number':int(f['line']), 'text':'code'}]
+                if with_blame:
+                    f['source'][0]['blame'] = {'author':'Alice'}
+            with patch('inc.paged.Sources.enrich', enrich), PagedReport(store.path, base, 0) as live:
+                with connect(store.path) as db:
+                    identity = db.execute('SELECT id FROM issues').fetchone()[0]
+                live.request(identity)
+                self.assertTrue(entered.wait(3))
+                client = http.client.HTTPConnection('127.0.0.1', live.server.server_port, timeout=1)
+                client.request('GET', '/api/issue?id='+identity)
+                data = json.loads(client.getresponse().read()); client.close()
+                self.assertFalse(data['ready'])
+                self.assertIn('2/3', data['report']['errors'][0]['source_progress'])
+                self.assertTrue(any(rows[0].get('blame', {}).get('author') == 'Alice'
+                                    for rows in data['report']['source_snippets']))
+                # Slow attribution holds no write lock and cannot stall collection.
+                store.accept(ET.fromstring(error('new', kind='InvalidRead')))
+                store.commit()
+
     def test_worker_retries_transient_database_lock(self):
         with tempfile.TemporaryDirectory() as directory, ExitStack() as cleanup:
             store=ErrorStore(Path(directory)/'results.sqlite3','errors.xml');cleanup.callback(store.close)

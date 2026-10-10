@@ -149,6 +149,10 @@ class PagedReport:
                         row = db.execute('SELECT * FROM issues WHERE author_done<2 AND attempts<3 AND retry_at<? ORDER BY seq LIMIT 1',(time.time(),)).fetchone()
                     if row is None:
                         self.stop.wait(0.2); continue
+                    if identity and row['ready']:
+                        with self.pending_lock:
+                            self.pending.discard(identity)
+                        continue
                     item = issue_data(row)
                     # Reuse the directory index across errors; bound full-file caches.
                     sources.files = {}
@@ -164,11 +168,18 @@ class PagedReport:
                         sources.enrich(frame, with_blame=False)
                     with self.files_lock:
                         self.source_files.update(sources.files)
+                    item['source_progress'] = 'blame 已处理 0/%d 个栈帧；可继续浏览或切换错误' % len(frames)
                     db.execute('UPDATE issues SET enriched=? WHERE id=?', (json.dumps(item,ensure_ascii=False),row['id']))
                     db.commit()
-                    for frame in frames:
+                    for index, frame in enumerate(frames):
                         self.checkpoint()
                         sources.enrich(frame)
+                        # Publish each completed frame, not only the whole stack.
+                        # Git queries run outside the SQLite write transaction.
+                        item['source_progress'] = 'blame 已处理 %d/%d 个栈帧；可继续浏览或切换错误' % (index + 1, len(frames))
+                        db.execute('UPDATE issues SET enriched=? WHERE id=?',
+                                   (json.dumps(item,ensure_ascii=False),row['id']))
+                        db.commit()
                     first = item['stacks'][0]['frames'][0] if item['stacks'] and item['stacks'][0]['frames'] else {}
                     author = next((r.get('blame',{}).get('author','') for r in first.get('source',[]) if r['number']==integer(first.get('line'))), '')
                     with self.files_lock:
