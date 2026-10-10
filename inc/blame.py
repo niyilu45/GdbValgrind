@@ -15,19 +15,26 @@ class BlameRows(dict):
         self.note = note
 
 
-def source_blame(path, start, end, timeout=5, checkpoint=None):
+def source_blame(path, start, end, timeout=5, checkpoint=None, ranges=None):
+    merged = []
+    for first, last in sorted(ranges or [(start,end)]):
+        if merged and first <= merged[-1][1] + 1:
+            merged[-1][1] = max(last,merged[-1][1])
+        else:
+            merged.append([first,last])
+    requested = {n for first,last in merged for n in range(first,last+1)}
     try:
         stat = path.stat()
         key = (str(path), stat.st_mtime_ns, stat.st_size)
         now = time.monotonic()
         cached = _cache.get(key)
-        if cached and now - cached[0] < 60 and all(n in cached[1] for n in range(start, end + 1)):
-            return {n: row for n, row in cached[1].items() if start <= n <= end}
+        if cached and now - cached[0] < 60 and requested.issubset(cached[1]):
+            return {n: cached[1][n] for n in requested}
         git = shutil.which('git')
         if not git:
             return BlameRows('未安装 Git 或 PATH 中找不到 Git')
         result = run_git([git, '--no-pager', '-C', str(path.parent),
-                                 'blame', '--line-porcelain', '-L', '%d,%d' % (start, end), '--', path.name],
+                                 'blame', '--line-porcelain'] + [arg for first,last in merged for arg in ('-L','%d,%d' % (first,last))] + ['--', path.name],
                          timeout=timeout, checkpoint=checkpoint)
         rows, current, number = {}, {}, None
         if result.returncode != 0:
@@ -58,7 +65,7 @@ def source_blame(path, start, end, timeout=5, checkpoint=None):
             # Keep the original expiry when extending a cached file, so old
             # lines do not remain stale indefinitely under frequent queries.
             _cache[key] = (cached[0] if cached and now - cached[0] < 60 else time.monotonic(), rows)
-        return {n: row for n, row in rows.items() if start <= n <= end} if rows else BlameRows('Git 未返回可解析的行归属')
+        return {n: rows[n] for n in requested if n in rows} if rows else BlameRows('Git 未返回可解析的行归属')
     except subprocess.TimeoutExpired:
         return BlameRows('Git 查询超过 %.1f 秒，已跳过' % timeout)
     except (OSError, ValueError, OverflowError, subprocess.SubprocessError):

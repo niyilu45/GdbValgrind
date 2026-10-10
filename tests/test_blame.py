@@ -39,6 +39,14 @@ class BlameTests(unittest.TestCase):
             args = run.call_args.args[0]
             self.assertEqual(args[args.index('-L') + 1], '1,2')
 
+    def test_multiple_ranges_merge_without_querying_gaps(self):
+        with patch('inc.blame.shutil.which', return_value='/git'), patch('inc.blame.run_git',
+                return_value=SimpleNamespace(returncode=0, stdout='')) as run:
+            source_blame(self.path, 1, 10, ranges=[(1,10),(8,20),(100,110)])
+        run.assert_called_once()
+        args = run.call_args.args[0]
+        self.assertEqual([args[i+1] for i,v in enumerate(args) if v=='-L'], ['1,20','100,110'])
+
     def test_files_have_independent_budgets_and_frames_share_results(self):
         other = self.path.with_name('other.c')
         other.write_text('int y;\n')

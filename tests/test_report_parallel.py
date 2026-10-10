@@ -9,6 +9,25 @@ from tests.test_aivalgrind import error, frame, xml
 
 
 class ParallelReportTests(unittest.TestCase):
+    def test_file_batch_reads_source_and_queries_blame_once(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root/'demo.c'
+            source.write_text('int x;\n'*200)
+            frames = [{'file':'demo.c','line':str(n)} for n in (15,20,100)]
+            report = {'errors':[{'stacks':[{'frames':frames}]}], 'source_files':{}}
+            original = Path.read_text
+            reads = []
+            def read(path, *args, **kwargs):
+                reads.append(path)
+                return original(path, *args, **kwargs)
+            with patch.object(Path, 'read_text', read), patch('inc.core.source_blame', return_value={}) as blame:
+                core.enrich_parallel(report, root, 4)
+            self.assertEqual(reads, [source.resolve()])
+            blame.assert_called_once()
+            self.assertEqual(blame.call_args.kwargs['ranges'], [(5,25),(10,30),(90,110)])
+            self.assertTrue(all(f['source'] for f in frames))
+
     def test_repeated_positions_are_enriched_once_without_merging_stacks(self):
         frames = [{'file':'demo.c','line':'15','fn':'function%d' % i,'ip':hex(i)} for i in range(100000)]
         report = {'errors':[{'stacks':[{'frames':frames}]}], 'source_files':{}}

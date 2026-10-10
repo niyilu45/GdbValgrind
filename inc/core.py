@@ -126,6 +126,14 @@ class Sources:
                 return
             start, end = frame['source'][0]['number'], frame['source'][-1]['number']
             blame_key = (path, start, end)
+            batch_lines = getattr(self, 'batch_lines', None)
+            if batch_lines:
+                batch_key = (path, 'batch')
+                if batch_key not in self.blame_cache:
+                    ranges = [(max(1,n-10),min(len(lines),n+10)) for n in batch_lines if 1 <= n <= len(lines)]
+                    self.blame_cache[batch_key] = source_blame(path, start, end, ranges=ranges,
+                        checkpoint=lambda: self.progress('等待文件 blame: ' + str(path)))
+                self.blame_cache[blame_key] = self.blame_cache[batch_key]
             if blame_key not in self.blame_cache:
                 self.progress('查询 git blame（单次最多 5 秒）: %s:%s-%s' % (path, start, end))
                 self.blame_cache[blame_key] = source_blame(path, start, end,
@@ -235,31 +243,42 @@ def enrich_parallel(report, project, workers, progress=None, reuse=False):
     def checkpoint(text):
         if stop.is_set():
             raise KeyboardInterrupt()
-    def enrich(frame):
+    def enrich(batch):
         if not hasattr(local,'sources'):
             local.sources=Sources(root, progress=checkpoint)
         sources=local.sources
         if len(sources.cache)>32:
             sources.cache.clear(); sources.cache_stamps.clear()
-        checkpoint('')
-        sources.enrich(frame)
-        share(frame)
-        key=frame.get('source_file_id')
-        return (key,sources.files[key]) if key in sources.files else None
+        sources.blame_cache.clear()
+        sources.batch_lines = [integer(f.get('line')) for f in batch]
+        files = {}
+        for frame in batch:
+            checkpoint('')
+            sources.enrich(frame)
+            share(frame)
+            key=frame.get('source_file_id')
+            if key in sources.files:
+                files[key] = sources.files[key]
+        return files, len(batch)
+    file_batches = {}
+    for frame in frames:
+        key = source_identity(frame.get('dir',''), frame.get('file',''))
+        file_batches.setdefault(key, []).append(frame)
+    # Bound command-line length for files with thousands of separate locations.
+    batches = [group[i:i+128] for group in file_batches.values() for i in range(0,len(group),128)]
     executor=ThreadPoolExecutor(max_workers=workers,thread_name_prefix='aivalgrind-report-source')
-    pending=set(); iterator=iter(frames); done_count=0
+    pending=set(); iterator=iter(batches); done_count=0
     try:
-        for _ in range(min(workers*2,len(frames))):
+        for _ in range(min(workers*2,len(batches))):
             pending.add(executor.submit(enrich,next(iterator)))
         while pending:
             if progress:
                 progress('源码与 blame（%d 线程） | %d / %d 帧位置 | 累计 %d 帧，独立 %d，复用 %d' % (workers,done_count,len(frames),total_frames,unique_frames,reused))
             completed,pending=wait(pending,timeout=0.1,return_when=FIRST_COMPLETED)
             for future in completed:
-                result=future.result()
-                if result:
-                    report['source_files'][result[0]]=result[1]
-                done_count+=1
+                files, count=future.result()
+                report['source_files'].update(files)
+                done_count+=count
                 frame=next(iterator,None)
                 if frame is not None:
                     pending.add(executor.submit(enrich,frame))
