@@ -36,11 +36,11 @@ let indexed=[],kindCounts=new Map();
 function errorAuthor(e){const frame=e.stacks[0]?.frames[0];const author=frame?.source?.find(row=>row.number===Number(frame.line))?.blame?.author;return author?'author:'+author:'missing'}
 function authorOptions(){
  const select=$('authorFilter'),previous=select.value,counts=new Map();
- for(const row of indexed)counts.set(row.author,(counts.get(row.author)||0)+1);
+ for(const row of indexed)counts.set(row.author,(counts.get(row.author)||0)+(row.e.kind==='Leak_StillReachable'?0:1));
  const name=author=>author==='missing'?'\u65e0\u4f5c\u8005\u4fe1\u606f':author.slice(7);
  if(previous&&!counts.has(previous))counts.set(previous,0);
  const authors=[...counts.keys()].sort((a,b)=>counts.get(b)-counts.get(a)||name(a).localeCompare(name(b),'zh-CN'));
- select.replaceChildren(new Option('\u5168\u90e8\u4f5c\u8005 ('+indexed.length+')',''));
+ select.replaceChildren(new Option('\u5168\u90e8\u4f5c\u8005 ('+[...counts.values()].reduce((sum,count)=>sum+count,0)+')',''));
  for(const author of authors)select.append(new Option(name(author)+' ('+counts.get(author)+')',author));
  select.value=previous||'';
 }
