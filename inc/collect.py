@@ -85,6 +85,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
     last_summary = None
     live = None
     display = None
+    next_blame_retry, blame_retries = float('inf'), 0
 
     def phase(text):
         watchdog.mark(text)
@@ -108,13 +109,17 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
                 raise ValueError('采集 XML 解析失败，原始文件已保留: ' + parse_failure) from exc
 
     def publish(force=False):
-        nonlocal last_summary
+        nonlocal last_summary, next_blame_retry, blame_retries
         phase('正在去重并统计错误')
         report = report_from_root(stream.root, xml_path, xml_complete=stream.complete)
         summary = summary_data(report)
         payload = {**summary, 'state': state, 'exit_code': result,
                    'xml': str(xml_path), 'parse_error': parse_failure}
-        if force or payload != last_summary:
+        changed = payload != last_summary
+        if changed:
+            blame_retries = 0
+        retry_blame = live is not None and time.monotonic() >= next_blame_retry
+        if force or changed or retry_blame:
             temp = directory / 'status.json.tmp'
             with temp.open('w', encoding='utf-8') as file:
                 json.dump({**payload, 'started_at': started_at, 'elapsed_seconds': max(0, time.monotonic() - started_clock)}, file, ensure_ascii=False, indent=2)
@@ -125,6 +130,11 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
             if live is not None:
                 phase('正在生成网页报告（包含源码）')
                 detailed = report_from_root(stream.root, xml_path, project_dir, xml_complete=stream.complete)
+                if retry_blame and not changed:
+                    blame_retries += 1
+                missing = any('blame' not in row for error in detailed['errors'] for stack in error['stacks']
+                              for frame in stack['frames'] for row in frame.get('source', []))
+                next_blame_retry = time.monotonic() + 15 if missing and blame_retries < 3 else float('inf')
                 detailed['debug_command'] = command_metadata(stream.root, xml_path, project_dir)
                 live.update(detailed, state)
                 saved = directory / 'report.html.tmp'

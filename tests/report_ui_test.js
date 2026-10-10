@@ -15,7 +15,7 @@ function setup(report, environment={}){
   setAttribute(k,v){this.attrs[k]=v;}
   scrollIntoView(){} focus(){} select(){}
  }
- for(const id of ['report-data','nav','search','fileFilter','resetFilters','listCount','list','detail','file','mode','notice']){const n=new Element('div');n.id=id;}
+ for(const id of ['report-data','nav','search','fileFilter','authorFilter','resetFilters','listCount','list','detail','file','mode','notice']){const n=new Element('div');n.id=id;}
  ids.get('report-data').textContent=JSON.stringify(report);
  const context=vm.createContext({document:{getElementById:id=>ids.get(id),createElement:tag=>new Element(tag),createTextNode:text=>{const n=new Element('text');n.textContent=text;return n}},
   Option:function(text,value){const n=new Element('option');n.textContent=text;n.value=value;return n;},
@@ -103,6 +103,28 @@ check.ids.get('resetFilters').onclick();check.ids.get('list').children[0].onclic
 assert.equal(check.ids.get('detail').children[0].textContent,'查看代码文件');
 assert.equal(check.ids.get('detail').children[0].disabled,false);
 const blameUI=setup(original);
+const authorReport=JSON.parse(JSON.stringify(original));
+const authorFrame=(author)=>({file:'test.c',line:'9',source:[{number:8,text:'context',blame:{author:'Context'}},{number:9,text:'error',blame:{author}}]});
+authorReport.errors=[
+ {...original.errors[0],id:'alice',stacks:[{frames:[authorFrame('Alice'),authorFrame('Parent')]},{frames:[authorFrame('Origin')]}]},
+ {...original.errors[1],id:'bob',stacks:[{frames:[authorFrame('Bob'),authorFrame('Alice')]}]},
+ {...original.errors[0],id:'unknown',stacks:[{frames:[{file:'test.c',line:'9'},authorFrame('Alice')]}]}
+];
+const authors=setup(authorReport),authorSelect=authors.ids.get('authorFilter');
+assert(!authorSelect.children.some(n=>['author:Parent','author:Origin','author:Context'].includes(n.value)));
+authorSelect.value='author:Alice';authorSelect.onchange();
+assert.equal(authors.run('filtered.map(row=>row.e.id).join()'),'alice','only innermost error line author counts');
+assert.equal(authors.ids.get('nav').children[0].children[1].textContent,'1/3');
+authors.ids.get('fileFilter').value='missing.c';authors.ids.get('fileFilter').oninput();
+assert.equal(authors.run('filtered.length'),0,'author and file filters combine');
+authors.ids.get('resetFilters').onclick();
+assert.equal(authors.run('filtered.length'),3);
+authorSelect.value='missing';authorSelect.onchange();
+assert.equal(authors.run('filtered[0].e.id'),'unknown','missing blame does not fall back to parent');
+authors.run("report.errors[2].stacks[0].frames[0].source=[{number:9,text:'x',blame:{author:'Later'}}];indexReport();list()");
+assert.equal(authorSelect.value,'missing','live refresh preserves current filter');
+assert.equal(authors.run('filtered.length'),0);
+assert(authorSelect.children.some(n=>n.value==='author:Later'),'live refresh adds new authors');
 assert.equal(blameUI.ids.get('showBlame').checked,true);
 blameUI.ids.get('showBlame').checked=false;blameUI.ids.get('showBlame').onchange();
 assert.equal(blameUI.ids.get('showBlame').checked,false);

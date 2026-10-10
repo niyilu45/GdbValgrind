@@ -111,6 +111,10 @@ class Sources:
                 blame = attribution.get(row['number'])
                 if blame and blame.get('text') == row['text']:
                     row['blame'] = {k: v for k, v in blame.items() if k != 'text'}
+            found = sum('blame' in row for row in frame['source'])
+            frame['blame_note'] = 'blame: %d/%d 行' % (found, len(frame['source']))
+            if found < len(frame['source']):
+                frame['blame_note'] += '；' + getattr(attribution, 'note', '部分行未返回或源码与 Git 查询结果不一致')
         except OSError as exc:
             frame["source_note"] = "无法读取源码: " + str(exc)
 

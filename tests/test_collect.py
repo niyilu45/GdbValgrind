@@ -67,6 +67,40 @@ class PartialXMLTests(unittest.TestCase):
 
 
 class CollectionTests(unittest.TestCase):
+    def test_live_blame_retries_without_new_errors_are_bounded(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder) / 'run'
+            executable = Path(folder) / 'app'
+            executable.touch()
+            manager = MagicMock()
+            process = manager.__enter__.return_value.launch.return_value
+            clock = [0.0]
+            polls = [0]
+            def poll():
+                (directory / 'errors.xml').write_text(PREFIX)
+                polls[0] += 1
+                return 0 if polls[0] >= 8 else None
+            process.poll.side_effect = poll
+            display = MagicMock()
+            display.__enter__.return_value = display
+            display.refresh_error = None
+            display.wait.side_effect = lambda seconds: clock.__setitem__(0, clock[0] + seconds * 20)
+            live = MagicMock()
+            live.__enter__.return_value = live
+            live.server.origin = 'http://localhost:8765'
+            original = collection.report_from_root
+            def report(*args, **kwargs):
+                result = original(*args, **kwargs)
+                if len(args) > 2:
+                    for error in result['errors']:
+                        error['stacks'][0]['frames'][0]['source'] = [{'number': 9, 'text': 'x'}]
+                return result
+            with patch.object(collection.sys, 'platform', 'linux'), patch.object(collection.shutil, 'which', return_value='/usr/bin/valgrind'), patch.object(collection, 'ProcessSession', return_value=manager), patch.object(collection, 'TerminalProgress', return_value=display), patch.object(collection, 'LiveReport', return_value=live), patch.object(collection.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(collection, 'report_from_root', side_effect=report):
+                collection.collect_run([str(executable)], directory, live_port=0, output_mode='file')
+            running = [call for call in live.update.call_args_list if call.args[1] == 'running' and call.args[0]['errors']]
+            # First error publication plus three retries, despite unchanged XML.
+            self.assertEqual(len(running), 4)
+
     def test_final_parsing_remains_interruptible(self):
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder) / 'run'
