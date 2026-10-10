@@ -125,6 +125,14 @@ authors.run("report.errors[2].stacks[0].frames[0].source=[{number:9,text:'x',bla
 assert.equal(authorSelect.value,'missing','live refresh preserves current filter');
 assert.equal(authors.run('filtered.length'),0);
 assert(authorSelect.children.some(n=>n.value==='author:Later'),'live refresh adds new authors');
+authors.run("report.errors.push({...report.errors[1],id:'bob-again',count:100});indexReport();list()");
+assert.equal(authorSelect.children[0].textContent,'全部作者 (4)');
+assert.equal(authorSelect.children[1].value,'author:Bob','most errors first');
+assert.equal(authorSelect.children[1].textContent,'Bob (2)','count deduplicated issues, not occurrences');
+assert.equal(authorSelect.children.at(-1).value,'missing');
+assert.equal(authorSelect.children.at(-1).textContent,'无作者信息 (0)');
+assert.equal(authorSelect.value,'missing','sorting retains selected author');
+assert.equal(authorSelect.children[2].value,'author:Alice','ties sort by author name');
 assert.equal(blameUI.ids.get('showBlame').checked,true);
 blameUI.ids.get('showBlame').checked=false;blameUI.ids.get('showBlame').onchange();
 assert.equal(blameUI.ids.get('showBlame').checked,false);
