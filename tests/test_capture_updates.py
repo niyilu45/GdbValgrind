@@ -13,7 +13,8 @@ class Element {
  get textContent(){return (this.text||'')+this.children.map(n=>typeof n==='string'?n:n.textContent).join('')}
  set textContent(value){this.text=value;this.children=[]}
  constructor(){this.children=[];this.dataset={};this.style={};this.textContent='';}
- append(...nodes){this.children.push(...nodes)}
+ append(...nodes){for(const node of nodes){if(node.parentNode)node.parentNode.children=node.parentNode.children.filter(n=>n!==node);if(typeof node!=='string')node.parentNode=this;this.children.push(node)}}
+ get lastElementChild(){return this.children[this.children.length-1]}
  before(node){this.previous=node}
  querySelector(){return this.children[1]}
  querySelectorAll(){return this.children}
@@ -21,15 +22,17 @@ class Element {
 }
 const area=new Element(),status=new Element();
 const frame=new Element();frame.dataset.frameKey='0:0';frame.open=true;area.append(frame);
+let loaded=false;const source=new Element();source.textContent='source code';
+frame.ontoggle=()=>{if(frame.open&&!loaded){loaded=true;frame.append(source)}};
 global.report={errors:[{id:'one',kind:'InvalidWrite',what:'Invalid write of size 4',stacks:[{frames:[{local_file:'/src/a.c',line:10,fn:'main'}]}]}]};
 const issueList=new Element(),navigation=new Element(),issue=new Element();issue.dataset.errorId='one';issueList.append(issue);navigation.append(new Element(),new Element());
-global.selected='one';global.detail=()=>{};global.nav=()=>{for(const node of navigation.children)node.textContent=matchingRows().length+'/'+report.errors.length};global.list=()=>nav();let filtered=true;global.matchingRows=()=>filtered?report.errors.map(e=>({e})):[];
+global.savedFilters={variables:true};global.selected='one';global.detail=()=>{};global.nav=()=>{for(const node of navigation.children)node.textContent=matchingRows().length+'/'+report.errors.length};global.list=()=>nav();let filtered=true;global.matchingRows=()=>filtered?report.errors.map(e=>({e})):[];
 global.window={};global.document={head:new Element(),getElementById:id=>id==='detail'?area:id==='list'?issueList:id==='nav'?navigation:status,createElement:()=>new Element(),createTextNode:text=>text};
 global.setTimeout=()=>1;global.clearTimeout=()=>{};
 '''
         checks = r'''
 const snapshot={requested_error_id:'wrong',valgrind_error:'Invalid write of size 4',frames:[{file:'/src/a.c',line:10,function:'main',variables:[{name:'x',value:'42'}]}]};
-const checkbox=status.previous.children[0];checkbox.checked=true;assert.strictEqual(matchingRows().length,0);
+const checkbox=status.previous.children[0];assert.strictEqual(checkbox.checked,true);assert.strictEqual(matchingRows().length,0);
 checkbox.onchange();assert.strictEqual(navigation.children[1].textContent,'0/1');
 window.aivCaptureUpdate({live:true,items:[{id:'capture',snapshot}]});
 assert.strictEqual(matchingRows().length,1);
@@ -46,9 +49,13 @@ const other={...snapshot,valgrind_error:'Invalid read of size 4'};
 window.aivCaptureUpdate({live:false,items:[{id:'other',snapshot:other}]});
 assert.strictEqual(frame.children.length,1);
 assert(status.textContent.includes('1 个现场未能唯一匹配'));
+frame.ontoggle();assert.strictEqual(frame.children[0],source);assert.strictEqual(frame.lastElementChild,panel);
+frame.open=false;frame.ontoggle();frame.open=true;frame.ontoggle();
+assert.strictEqual(frame.children.length,2);assert.strictEqual(frame.lastElementChild,panel);assert(all.open);
+window.aivCaptureUpdate({live:false,items:[{snapshot}]});assert.strictEqual(frame.lastElementChild,panel);
 '''
         script = SCRIPT.replace('<script>', '').replace('</script>', '')
-        result = subprocess.run(['node','-e',setup+script+checks], capture_output=True, text=True)
+        result = subprocess.run(['node','-e',setup+script+checks], capture_output=True, text=True, encoding='utf-8')
         self.assertEqual(result.returncode,0,result.stderr)
 
     @unittest.skipUnless(shutil.which('node'), 'requires Node')
@@ -78,6 +85,11 @@ const frame=new Element();frame.dataset.frameKey='0:1';nodes.detail.append(frame
 const runtime=(file,status='available',parent=20)=>({valgrind_error:'==123== Invalid write of size 4',frames:[
  {function:'wrapper'}, {file:'/build/src/./'+file,line:10,function:'foo',variables:[{name:'i',value:'5',status}]},
  {file:'/build/src/main.c',line:parent,function:'main',variables:[]}]});
+const short=runtime('bad.c');short.frames.pop();
+const wrongFunction=runtime('bad.c');wrongFunction.frames[1].function='another_function';
+const caller=runtime('bad.c');caller.frames.unshift({file:'/build/src/actual-error.c',line:1,function:'actual_error'});
+window.aivCaptureUpdate({live:true,items:[{snapshot:short},{snapshot:wrongFunction},{snapshot:caller}]});
+assert(nodes['capture-status'].textContent.includes('已关联 0 个错误'));
 window.aivCaptureUpdate({live:false,items:[
  {snapshot:runtime('a.c')}, {snapshot:runtime('bad.c','available',99)},
  {snapshot:runtime('same.c')}, {snapshot:runtime('opt.c','optimized_out')}]});
@@ -118,5 +130,5 @@ assert.strictEqual(member('request.unknown').style.color,'#805000');
 assert(member('request.unknown').textContent.includes('【不确定】'));
 '''
         script = SCRIPT.replace('<script>', '').replace('</script>', '')
-        result = subprocess.run(['node', '-e', setup+script+checks], capture_output=True, text=True)
+        result = subprocess.run(['node', '-e', setup+script+checks], capture_output=True, text=True, encoding='utf-8')
         self.assertEqual(result.returncode, 0, result.stderr)

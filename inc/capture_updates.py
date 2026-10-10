@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v9
+// aiv-stack-captures-v12
 (()=>{
  let running=true,timer;const captures=new Map();
  const status=document.getElementById('capture-status');
@@ -11,7 +11,8 @@ SCRIPT = r'''
  const index=new Map();for(const e of report.errors)for(const f of (e.stacks[0]?.frames||[]).slice(0,16))if(Number(f.line)>0)for(const p of paths(f)){const key=p+':'+Number(f.line);if(!index.has(key))index.set(key,new Set());index.get(key).add(e)}
  const message=s=>String(s||'').replace(/0x[0-9a-f]+/gi,'<address>').replace(/\s+/g,' ').trim().toLowerCase();
  function sameFrame(f,r){
-  return !!r.file&&paths(f).includes(normalize(r.file))&&Number(f.line)>0&&Number(f.line)===Number(r.line);
+  const fn=s=>String(s||'').replace(/\s+/g,' ').trim().replace(/\([^()]*\)$/,'').trim();
+  return !!r.file&&paths(f).includes(normalize(r.file))&&Number(f.line)>0&&Number(f.line)===Number(r.line)&&(!f.fn||!r.function||fn(f.fn)===fn(r.function));
  }
  function match(e,snapshot){
   if(!snapshot.valgrind_error||!message(snapshot.valgrind_error).includes(message(e.what))||!e.what)return null;
@@ -21,17 +22,15 @@ SCRIPT = r'''
   const source=frames.slice(0,16).map((f,i)=>({f,i})).filter(x=>paths(x.f).length&&Number(x.f.line)>0);
   const actual=runtime.filter(r=>r.file&&Number(r.line)>0);
   if(!source.length||!actual.length)return null;
-  const alignments=[];
-  for(let start=0;start<actual.length;start++){
-   if(!sameFrame(source[0].f,actual[start]))continue;
-   const result=new Map();let valid=true;
-   for(let j=0;j<source.length&&start+j<actual.length;j++){
-    if(!sameFrame(source[j].f,actual[start+j])){valid=false;break}
-    result.set('0:'+source[j].i,actual[start+j]);
-   }
-   if(valid&&result.size)alignments.push(result);
+  // Never match a caller further down the runtime stack, or accept a short
+  // prefix when the recorded caller chain is unavailable.
+  if(actual.length<source.length)return null;
+  const result=new Map();
+  for(let j=0;j<source.length;j++){
+   if(!sameFrame(source[j].f,actual[j]))return null;
+   result.set('0:'+source[j].i,actual[j]);
   }
-  return alignments.length===1?alignments[0]:null;
+  return result;
  }
  const initLabels={defined:'已检查部分已初始化',undefined:'未初始化，显示值不可靠',partially_undefined:'部分未初始化，显示值不可靠',unaddressable:'内存不可访问',partial_check:'只检查了部分内容，其余未知',unknown:'初始化状态无法确定'};
  const stateStyles={normal:['正常','#195943','#edf5ef'],uncertain:['不确定','#805000','#fff3d6'],abnormal:['异常','#9f3029','#fff0ec']};
@@ -76,8 +75,16 @@ SCRIPT = r'''
    if(panel)panel.remove();
    panel=document.createElement('section');panel.dataset.captureVariables='yes';panel.style.cssText='margin:16px 0;padding:16px;border:1px solid var(--line);overflow-wrap:anywhere';node.append(panel);
    panel._captureSaved=saved;
+   // Collapsed source frames load their code on the first toggle, after this
+   // panel was attached. Keep the same panel below that lazily inserted code.
+   const loadSource=node.ontoggle;
+   node.ontoggle=function(...args){
+    if(loadSource)loadSource.apply(this,args);
+    if(panel.parentNode===node&&node.lastElementChild!==panel)node.append(panel);
+   };
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
+   add('p','现场来源：'+(frame.function||'未知函数')+' · '+(frame.file||'未知文件')+':'+(frame.line||'?')+' · GDB 帧 #'+(frame.index??'?')).className='meta';
    add('p',saved.snapshot.captured_at||'本次运行').className='meta';
    const legend=add('p','');legend.className='meta';
    for(const state of Object.keys(stateStyles)){const tag=add('span',' ',legend);colorState(tag,state);tag.style.marginRight='10px'}
@@ -130,11 +137,13 @@ SCRIPT = r'''
  const originalDetail=detail;detail=function(e){originalDetail(e);paint(e)};
  function hasVariables(id){const saved=captures.get(id);return !!saved&&[...saved.frames.values()].some(f=>(f.variables||[]).some(v=>v.status==='available'||(!v.status&&v.value!==undefined&&v.value!==null)))}
  const filter=document.createElement('input');filter.type='checkbox';filter.id='captureVariableFilter';filter.style.width='auto';
+ if(typeof savedFilters!=='undefined')filter.checked=!!savedFilters.variables;
  const label=document.createElement('label');label.htmlFor=filter.id;label.append(filter,document.createTextNode('仅显示已读出变量值的错误'));
  const reset=document.getElementById('resetFilters');reset.before(label);
  const originalMatching=matchingRows;matchingRows=function(...args){const rows=originalMatching(...args);return filter.checked?rows.filter(row=>hasVariables(row.e.id)):rows};
- filter.onchange=()=>list();
+ filter.onchange=()=>{if(typeof savedFilters!=='undefined')savedFilters.variables=!!filter.checked;list()};
  const originalReset=reset.onclick;reset.onclick=function(...args){filter.checked=false;originalReset?.apply(this,args)};
+ if(filter.checked)list();
  function badge(node,text){
   let mark=[...node.children].find(n=>n.dataset?.captureBadge==='yes');
   if(!mark){mark=document.createElement('span');mark.dataset.captureBadge='yes';mark.style.cssText='display:inline-block;font-size:12px;padding:2px 6px;border:1px solid #195943;border-radius:4px;color:#195943;background:#edf5ef;margin:4px';node.append(mark)}

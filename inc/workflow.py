@@ -170,8 +170,22 @@ def refresh_capture_report(directory, *, base_html=None, report=None):
         content = core.render_html(report, source_base=None)
     else:
         content = (directory / 'report.html').read_text(encoding='utf-8')
-    if 'aiv-stack-captures-v9' in content:
+    if 'aiv-stack-captures-v12' in content:
         return
+    from .templates import SOURCE_VIEW_STYLE, STACK_SCROLL_FUNCTION, SELECT_ERROR_FUNCTION, FILTER_STATE_SCRIPT
+    if 'id="report-data"' in content:
+        if '// aiv-filter-state-v1' not in content:
+            content = content.replace('let indexed=[],kindCounts=new Map();', FILTER_STATE_SCRIPT + '\nlet indexed=[],kindCounts=new Map();', 1)
+            content = content.replace('function list(reset=true){', 'function list(reset=true){\n saveFilters();', 1)
+            content = content.replace("$('resetFilters').onclick=()=>{kind='';", "$('resetFilters').onclick=()=>{savedFilters.variables=false;kind='';")
+        content = re.sub(r'^function scrollToErrorStack\(\).*$', '', content, flags=re.M)
+        content = re.sub(r'^function selectError\(e(?:,navigate=true)?\).*$',
+                         lambda match: STACK_SCROLL_FUNCTION + '\n' + SELECT_ERROR_FUNCTION,
+                         content, flags=re.M)
+        if 'd.dataset.hasSource=' not in content:
+            content = content.replace('d.dataset.frameKey=frameKey;',
+                                      "d.dataset.frameKey=frameKey;d.dataset.hasSource=f.source?'yes':'no';")
+        content = content.replace('</head>', '<style>' + SOURCE_VIEW_STYLE + '</style></head>', 1)
     content = re.sub(r'<section id="capture-results".*?</section>\s*(?:<script>.*?</script>)?', '', content, flags=re.S)
     content = content.replace('<a href="#capture-results">查看步骤三变量现场</a>', '')
     appendix = '<section id="capture-results" style="padding:24px"><h2>步骤三变量状态</h2><p>变量显示在对应错误的主调用栈帧下方。</p><p id="capture-status">正在读取变量数据…</p></section>' + CAPTURE_UPDATES

@@ -13,7 +13,7 @@ function setup(report, environment={}){
   append(...nodes){this.children.push(...nodes);}
   replaceChildren(...nodes){this.children=[];this._text='';this.append(...nodes);}
   setAttribute(k,v){this.attrs[k]=v;}
-  scrollIntoView(){} focus(){} select(){}
+  scrollIntoView(){this.scrolled=(this.scrolled||0)+1;} focus(){} select(){}
  }
  for(const id of ['report-data','nav','search','fileFilter','authorFilter','resetFilters','listCount','list','detail','file','mode','notice']){const n=new Element('div');n.id=id;}
  ids.get('report-data').textContent=JSON.stringify(report);
@@ -154,3 +154,23 @@ assert.equal(blameUI.ids.get('showBlame').checked,false);
 blameUI.ids.get('list').children[1].onclick();
 assert.equal(blameUI.ids.get('showBlame').checked,false);
 assert(blameUI.run('report.errors.some(e=>e.stacks.some(s=>s.frames.some(f=>f.source?.length)))'));
+
+const stack=blameUI.ids.get('detail').children.find(n=>n.dataset.frameKey&&n.scrolled);assert(stack&&stack.open,'desktop click opens and scrolls to source stack');
+
+// A page reload restores filters before the first list render.
+const stored=new Map(),storage={getItem:k=>stored.get(k)||null,setItem:(k,v)=>stored.set(k,v)};
+const persist=setup(original,{localStorage:storage});
+persist.run("kind='InvalidWrite';$('search').value='needle';$('fileFilter').value='demo.c';$('authorFilter').value='author:Alice';savedFilters.variables=true;list()");
+const restored=setup(original,{localStorage:storage});
+assert.equal(restored.run('kind'),'InvalidWrite');
+assert.equal(restored.ids.get('search').value,'needle');
+assert.equal(restored.ids.get('fileFilter').value,'demo.c');
+assert.equal(restored.ids.get('authorFilter').value,'author:Alice');
+assert.equal(restored.run('savedFilters.variables'),true);
+assert.equal(restored.run('selected'),null,'hidden errors are not selected after reload');
+const separate=setup({...original,xml:'other-report.xml'},{localStorage:storage});
+assert.equal(separate.ids.get('search').value,'','reports do not share filter state');
+restored.ids.get('resetFilters').onclick();
+const cleared=setup(original,{localStorage:storage});
+assert.equal(cleared.ids.get('search').value,'');assert.equal(cleared.run('kind'),'');assert.equal(cleared.run('savedFilters.variables'),false);
+setup(original,{localStorage:{getItem(){throw Error('blocked')},setItem(){throw Error('blocked')}}});

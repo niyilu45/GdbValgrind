@@ -1,6 +1,27 @@
 # -*- coding: utf-8 -*-
 """Self-contained offline report template."""
 
+SOURCE_VIEW_STYLE = r'''.source, .source *, details > summary{font-family:Consolas,"Liberation Mono",Menlo,"DejaVu Sans Mono",monospace;font-variant-ligatures:none;font-feature-settings:"liga" 0,"calt" 0;letter-spacing:normal;word-spacing:normal;font-style:normal}.source{font-size:13px;line-height:1.8}.source .line{line-height:1.8;min-height:1.8em}.source .line b,.source .line .blame{flex-shrink:0;overflow:hidden;vertical-align:bottom}details[data-frame-key]{scroll-margin-top:16px}'''
+
+STACK_SCROLL_FUNCTION = r'''function scrollToErrorStack(){const frames=[...$('detail').children].filter(n=>n.dataset?.frameKey?.startsWith('0:'));const target=frames.find(n=>n.dataset.hasSource==='yes')||frames[0];if(target){target.open=true;if(target.ontoggle)target.ontoggle();target.scrollIntoView({behavior:'auto',block:'start'})}else $('detail').scrollIntoView({behavior:'auto',block:'start'})}'''
+
+SELECT_ERROR_FUNCTION = r'''function selectError(e,navigate=true){selected=e.id;for(const b of $('list').children)if(b.dataset.errorId)b.setAttribute('aria-current',String(b.dataset.errorId===selected));detail(e);try{history.replaceState(null,'','#'+e.id)}catch{}if(navigate)scrollToErrorStack()}'''
+
+FILTER_STATE_SCRIPT = r'''// aiv-filter-state-v1
+const filterStorageKey='aivalgrind:filters:v1:'+String(location.pathname||'')+':'+String(report.xml||'');
+let savedFilters={};
+try{const value=JSON.parse(localStorage.getItem(filterStorageKey)||'{}');if(value&&typeof value==='object')savedFilters=value}catch{}
+function saveFilters(){
+ const checkbox=$('captureVariableFilter');
+ savedFilters={kind,search:$('search').value,file:$('fileFilter').value,author:$('authorFilter').value,variables:checkbox?!!checkbox.checked:!!savedFilters.variables};
+ try{localStorage.setItem(filterStorageKey,JSON.stringify(savedFilters))}catch{}
+}
+if(typeof savedFilters.kind==='string')kind=savedFilters.kind;
+if(typeof savedFilters.search==='string')$('search').value=savedFilters.search;
+if(typeof savedFilters.file==='string')$('fileFilter').value=savedFilters.file;
+if(typeof savedFilters.author==='string'&&savedFilters.author){$('authorFilter').append(new Option(savedFilters.author,savedFilters.author));$('authorFilter').value=savedFilters.author}
+'''
+
 HTML = r'''<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AiValgrind · 内存问题报告</title>
@@ -14,6 +35,8 @@ main{padding:28px 32px 60px;min-width:0;background:var(--paper)}h2{font-size:24p
 @media(min-width:1100px){nav{position:sticky;top:0;height:100vh;overflow:auto}.issues{max-height:calc(100vh - 100px);overflow:auto;position:sticky;top:0}}
 @media(max-width:1099px){.layout{grid-template-columns:190px minmax(0,1fr)}.issues{border-right:0}main{grid-column:1/-1;border-top:1px solid var(--line)}#list{max-height:350px;overflow:auto}.mobile-link{display:block;margin:10px 0;font-size:13px}}
 @media(max-width:600px){header{padding:18px;display:block}h1 small{display:block;margin:3px 0}.mode{margin-top:8px;font-size:13px}.layout{display:block}nav{border:0;padding:16px}#nav{display:flex;gap:6px;overflow:auto}nav button{width:auto;flex-shrink:0;gap:12px}nav .note{display:none}nav h2{margin-left:0}.search{padding-top:5px}main{padding:22px 18px 40px}h2{font-size:21px}.controls{align-items:stretch;flex-direction:column}select{width:100%;flex:auto}}
+
+__SOURCE_VIEW_STYLE__
 </style></head><body>
 <header><div><h1>AiValgrind <small>内存问题报告</small></h1><p id="file"></p></div><div class="mode" id="mode"></div></header>
 <div id="notice"></div><div class="layout"><nav aria-label="内存问题类型"><h2>问题类型</h2><p class="count-label">筛选后 / 总数（错误位置）</p><div id="nav"></div><p class="note">目录数量为筛选后位置数 / 总位置数。相同错误类型及调用路径已合并。次数来自 XML 中的 errorcounts；缺失时按记录计数。</p></nav>
@@ -34,6 +57,7 @@ const typeName=k=>labels[k]||k;
 const position=f=>f.file?f.file+(f.line?':'+f.line:''):(f.fn||f.obj||'无符号位置');
 const shellQuote=s=>/^[A-Za-z0-9_@%+=:,./-]+$/.test(s)?s:'"'+s.replace(/[\\"$`]/g,'\\$&')+'"';
 const normalize=s=>String(s||'').replace(/\\/g,'/').toLowerCase();
+__FILTER_STATE_SCRIPT__
 let indexed=[],kindCounts=new Map();
 function errorAuthor(e){const frame=e.stacks[0]?.frames[0];const author=frame?.source?.find(row=>row.number===Number(frame.line))?.blame?.author;return author?'author:'+author:'missing'}
 function authorOptions(){
@@ -50,7 +74,8 @@ function authorOptions(){
 function indexReport(){indexed=report.errors.map((e,index)=>{const frames=e.stacks.flatMap(s=>s.frames);const files=frames.flatMap(f=>[f.file,f.local_file,f.file?(f.dir?f.dir.replace(/[\\/]$/,'')+'/':'')+f.file:'']).filter(Boolean);return {e,index,author:errorAuthor(e),files:files.map(normalize),text:normalize([e.kind,typeName(e.kind),e.what,e.id,...files,...frames.flatMap(f=>[f.fn,f.obj])].join(' '))}});kindCounts=new Map();for(const e of report.errors)kindCounts.set(e.kind,(kindCounts.get(e.kind)||0)+1);authorOptions()}
 indexReport();
 let filtered=[];
-function selectError(e){selected=e.id;for(const b of $('list').children)if(b.dataset.errorId)b.setAttribute('aria-current',String(b.dataset.errorId===selected));detail(e);try{history.replaceState(null,'','#'+e.id)}catch{}if(innerWidth<1100)$('detail').scrollIntoView({behavior:'auto'})}
+__STACK_SCROLL_FUNCTION__
+__SELECT_ERROR_FUNCTION__
 function matchingRows(ignoreAuthor=false){const query=normalize($('search').value.trim()),file=normalize($('fileFilter').value.trim());return indexed.filter(row=>(ignoreAuthor||!$('authorFilter').value||row.author===$('authorFilter').value)&&row.text.includes(query)&&(!file||row.files.some(path=>path.includes(file))))}
 function nav(){
  const totals=new Map();for(const e of report.errors)totals.set(e.kind,(totals.get(e.kind)||0)+1);const matching=matchingRows();kindCounts=new Map();for(const row of matching)kindCounts.set(row.e.kind,(kindCounts.get(row.e.kind)||0)+1);
@@ -63,6 +88,7 @@ function openSourceFile(frame){
  window.open(file.url+'#L'+Number(frame.line),'_blank','noopener,noreferrer');
 }
 function list(reset=true){
+ saveFilters();
  if(reset){authorOptions();visibleLimit=100;filtered=matchingRows().filter(row=>!kind||row.e.kind===kind);nav();}
  const errors=filtered.map(row=>row.e);
  $('listCount').textContent='共 '+report.errors.length+' 个错误位置 · 筛选后 '+errors.length+' 个 · 已显示 '+Math.min(visibleLimit,errors.length)+' 个 · '+countPrefix+errors.reduce((n,e)=>n+e.count,0)+' 次记录';$('list').replaceChildren();
@@ -103,15 +129,15 @@ function detail(e){
  };
  box.append(command,copy,resumeLabel,resume,copyResume,el('p','继续命令定位到所选源码位置。已到达的位置或报告顺序早于当前位置时，会询问是否重跑：y 重新运行，n 忽略。报告顺序不保证本次执行顺序；其他断点或信号可能提前暂停。命令仅适用于新版脚本启动的同一报告会话。'));main.append(box);
  const blameLabel=el('label',undefined,'blame-toggle'),blameToggle=el('input');blameToggle.type='checkbox';blameToggle.id='showBlame';blameToggle.checked=showBlame;blameToggle.onchange=()=>{showBlame=blameToggle.checked;detail(e)};blameLabel.append(blameToggle,document.createTextNode('显示 blame（每行最后一次修订）'));main.append(blameLabel);if(!e.stacks.length)main.append(el('p','此错误没有调用栈；建议使用 -g 编译后重新采集。'));
- e.stacks.forEach((s,si)=>{main.append(el('h3',s.label,'stack-label'));s.frames.forEach((f,fi)=>{const frameKey=si+':'+fi,frameSignature=JSON.stringify([f,showBlame,report.source_files?.[f.source_file_id]]),previous=previousFrames.get(frameKey);if(previous?.dataset.frameSignature===frameSignature){main.append(previous);return}const d=el('details');d.dataset.frameKey=frameKey;d.dataset.frameSignature=frameSignature;d.open=savedFrames?.has(d.dataset.frameKey)?savedFrames.get(d.dataset.frameKey):!!f.source&&fi===s.frames.findIndex(x=>x.source);const summary=el('summary');summary.append(el('span','#'+si+':'+fi+'  '+(f.fn||'未知函数')+'  '),el('small',position(f)));d.append(summary);if(report.source_files?.[f.source_file_id]){const file=report.source_files[f.source_file_id];const link=el('a',f.local_file||file.path);link.href=file.url+'#L'+Number(f.line);link.target='_blank';link.rel='noopener noreferrer';const pathRow=el('p',undefined,'meta');pathRow.append(link);d.append(pathRow);const view=el('button','查看代码文件 ↗','secondary');view.onclick=()=>openSourceFile(f);d.append(view)}if(f.obj)d.append(el('p',f.obj,'meta'));if(f.source){let loaded=false;const loadSource=()=>{if(loaded||!d.open)return;loaded=true;const pre=el('pre',undefined,'source');for(const row of f.source){const line=el('span',undefined,'line'+(row.number===Number(f.line)?' hit':''));line.append(el('b',String(row.number)));if(showBlame){const info=row.blame;const annotation=el('span',info?[(info.commit||'').slice(0,8),info.author,info.date].filter(Boolean).join(' · '):'无 blame 信息','blame');annotation.title=info?[info.commit,info.author,info.date,info.summary].filter(Boolean).join(' | '):'Git 不可用、文件未跟踪或未能获取修订信息';line.append(annotation)}line.append(document.createTextNode(row.text));pre.append(line)}d.append(pre);if(showBlame&&f.blame_note)d.append(el('p',f.blame_note,'meta'))};d.ontoggle=loadSource;loadSource()}else if(!report.source_files?.[f.source_file_id])d.append(el('p',f.source_note||'无源码信息','meta'));main.append(d)})});
+ e.stacks.forEach((s,si)=>{main.append(el('h3',s.label,'stack-label'));s.frames.forEach((f,fi)=>{const frameKey=si+':'+fi,frameSignature=JSON.stringify([f,showBlame,report.source_files?.[f.source_file_id]]),previous=previousFrames.get(frameKey);if(previous?.dataset.frameSignature===frameSignature){main.append(previous);return}const d=el('details');d.dataset.frameKey=frameKey;d.dataset.hasSource=f.source?'yes':'no';d.dataset.frameSignature=frameSignature;d.open=savedFrames?.has(d.dataset.frameKey)?savedFrames.get(d.dataset.frameKey):!!f.source&&fi===s.frames.findIndex(x=>x.source);const summary=el('summary');summary.append(el('span','#'+si+':'+fi+'  '+(f.fn||'未知函数')+'  '),el('small',position(f)));d.append(summary);if(report.source_files?.[f.source_file_id]){const file=report.source_files[f.source_file_id];const link=el('a',f.local_file||file.path);link.href=file.url+'#L'+Number(f.line);link.target='_blank';link.rel='noopener noreferrer';const pathRow=el('p',undefined,'meta');pathRow.append(link);d.append(pathRow);const view=el('button','查看代码文件 ↗','secondary');view.onclick=()=>openSourceFile(f);d.append(view)}if(f.obj)d.append(el('p',f.obj,'meta'));if(f.source){let loaded=false;const loadSource=()=>{if(loaded||!d.open)return;loaded=true;const pre=el('pre',undefined,'source');for(const row of f.source){const line=el('span',undefined,'line'+(row.number===Number(f.line)?' hit':''));line.append(el('b',String(row.number)));if(showBlame){const info=row.blame;const annotation=el('span',info?[(info.commit||'').slice(0,8),info.author,info.date].filter(Boolean).join(' · '):'无 blame 信息','blame');annotation.title=info?[info.commit,info.author,info.date,info.summary].filter(Boolean).join(' | '):'Git 不可用、文件未跟踪或未能获取修订信息';line.append(annotation)}line.append(document.createTextNode(row.text));pre.append(line)}d.append(pre);if(showBlame&&f.blame_note)d.append(el('p',f.blame_note,'meta'))};d.ontoggle=loadSource;loadSource()}else if(!report.source_files?.[f.source_file_id])d.append(el('p',f.source_note||'无源码信息','meta'));main.append(d)})});
 }
 $('file').textContent=report.xml;
 $('mode').textContent=report.token?(report.auto_values?'本地服务 · 自动采集首次错误现场':'本地服务 · 可联合调试'):'离线报告 · 可导出调试命令';
 if(!report.live){$('notice').append(el('div','当前是报告快照，不会实时更新。查看采集进度请打开 collect / analyze 终端打印的 HTTP 实时报告链接，并保持采集运行；直接打开 HTML 文件或使用 browse 仅查看快照。','notice'))}
 if(!report.finished||report.fatal){const n=el('div',(report.fatal?'目标程序收到 '+report.fatal+'。 ':'')+(!report.finished?'报告不完整：仅恢复已完整写出的错误；次数为下限，尚未写出的错误及退出时泄漏信息可能缺失。':''),'notice');$('notice').append(n)}
 $('authorFilter').onchange=()=>list();$('search').oninput=()=>list();$('fileFilter').oninput=()=>list();
-$('resetFilters').onclick=()=>{kind='';$('authorFilter').value='';$('search').value='';$('fileFilter').value='';nav();list()};
-nav();list();const first=report.errors.find(e=>e.id===location.hash.slice(1))||report.errors[0];if(first){selectError(first)}
+$('resetFilters').onclick=()=>{savedFilters.variables=false;kind='';$('authorFilter').value='';$('search').value='';$('fileFilter').value='';nav();list()};
+nav();list();const first=filtered.find(row=>row.e.id===location.hash.slice(1))?.e||filtered[0]?.e;if(first){selectError(first,false)}
 if(report.token)setInterval(async()=>{try{const r=await fetch('/api/status',{headers:{'X-Debug-Token':report.token}});if(!r.ok)throw Error();const s=await r.json();busy=s.busy;if($('startDebug'))$('startDebug').disabled=busy;if($('status'))$('status').textContent=s.message}catch{if($('status'))$('status').textContent='服务已断开，请检查 SSH 连接。'}},2000);
 if(report.live){
  let revision=-1,refreshTimer=null,refreshing=false,syncCount=0,lastChange='尚未收到新错误';
@@ -142,6 +168,8 @@ if(report.live){
 }
 </script></body></html>'''
 
+HTML = HTML.replace('__FILTER_STATE_SCRIPT__', FILTER_STATE_SCRIPT).replace('__SOURCE_VIEW_STYLE__', SOURCE_VIEW_STYLE).replace('__STACK_SCROLL_FUNCTION__', STACK_SCROLL_FUNCTION).replace('__SELECT_ERROR_FUNCTION__', SELECT_ERROR_FUNCTION)
+
 PAGED_SCRIPT = r'''
 if(report.paged){
  let offset=0,requestId=0,detailId=0,detailReady=false,timer,pageController=null,detailController=null,detailLoading=false;
@@ -149,18 +177,19 @@ if(report.paged){
  $('mode').textContent='实时采集 · SQLite 分页';
  const banner=el('div','错误增量入库，源码与 blame 在后台加载。','notice');$('notice').replaceChildren(banner);
  const paging=el('div',undefined,'controls'),prev=el('button','上一页','secondary'),next=el('button','下一页','secondary');paging.append(prev,next);$('list').after(paging);
- async function loadDetail(id){
+ async function loadDetail(id,navigate=false){
   const version=++detailId;const changed=selected!==id;selected=id;detailLoading=true;
   if(detailController)detailController.abort();const controller=new AbortController();detailController=controller;const timeout=setTimeout(()=>controller.abort(),10000);
   if(changed){rememberDetail();detailVersion='';detailKey='';$('detail').replaceChildren(el('p','正在加载调用栈…','notice'))}
   for(const b of $('list').children)if(b.dataset.errorId)b.setAttribute('aria-current',String(b.dataset.errorId===id));
   try{const response=await fetch('/api/issue?id='+encodeURIComponent(id)+'&version='+encodeURIComponent(detailVersion),{cache:'no-store',signal:controller.signal});if(!response.ok)throw Error('HTTP '+response.status);const data=await response.json();if(version!==detailId||id!==selected)return;
-   detailReady=data.ready;if(data.unchanged)return;const key=data.version||JSON.stringify(data);detailVersion=data.version||'';if(key===detailKey)return;detailKey=key;const value=restoreSources(data.report);report.source_files=value.source_files;report.source_access=value.source_access;report.project=value.project??report.project;report.source_pending=value.source_pending;detail(value.errors[0]);
+   detailReady=data.ready;if(data.unchanged){if(navigate)scrollToErrorStack();return;}const key=data.version||JSON.stringify(data);detailVersion=data.version||'';if(key===detailKey){if(navigate)scrollToErrorStack();return;}detailKey=key;const value=restoreSources(data.report);report.source_files=value.source_files;report.source_access=value.source_access;report.project=value.project??report.project;report.source_pending=value.source_pending;detail(value.errors[0]);if(changed||navigate)scrollToErrorStack();
    if(!data.ready)$('detail').prepend(el('p',value.errors[0].source_progress||'源码和 blame 后台加载中；可继续浏览或切换错误。','notice'));
   }catch(error){if(version===detailId){detailReady=false;let note=$('detailRetry');if(!note){note=el('p',undefined,'notice');note.id='detailRetry';$('detail').prepend(note)}note.replaceChildren(document.createTextNode('详情暂未加载成功，已保留现有内容。'),el('span',error.name==='AbortError'?'请求超时。':error.message));const retry=el('button','重试详情','secondary');retry.onclick=()=>loadDetail(id);note.append(retry)}}
   finally{clearTimeout(timeout);if(version===detailId){detailLoading=false;detailController=null}}
  }
  async function loadPage(reset=false){
+  saveFilters();
   if(reset)offset=0;
   if(pageController)pageController.abort();const controller=new AbortController();pageController=controller;const timeout=setTimeout(()=>controller.abort(),10000);
   const version=++requestId,params=new URLSearchParams({offset:String(offset),kind,q:$('search').value.trim(),file:$('fileFilter').value.trim(),author:$('authorFilter').value});
@@ -173,7 +202,7 @@ if(report.paged){
    const total=Object.values(data.totals).reduce((a,b)=>a+b,0),matched=Object.values(data.kinds).reduce((a,b)=>a+b,0);
    const newNavKey=JSON.stringify([data.kinds,data.totals,kind]);if(navKey!==newNavKey){navKey=newNavKey;$('nav').replaceChildren();
    for(const k of ['',...Object.keys(data.totals)]){const b=el('button');if(['InvalidRead','InvalidWrite','Leak_DefinitelyLost'].includes(k))b.className='danger-kind';b.append(el('span',k?typeName(k):'全部问题'),el('span',(k?(data.kinds[k]||0):matched)+'/'+(k?data.totals[k]:total),'type-count'));b.setAttribute('aria-current',String(kind===k));b.onclick=()=>{kind=k;loadPage(true)};$('nav').append(b)}}
-   const newListKey=JSON.stringify(data.errors);if(listKey!==newListKey){listKey=newListKey;$('list').replaceChildren();for(const e of data.errors){const b=el('button',undefined,'issue');b.dataset.errorId=e.id;b.setAttribute('aria-current',String(e.id===selected));b.append(el('small','第 '+e.seq+' 条 · '+typeName(e.kind)+' · '+e.count+' 次'),el('strong',e.what));b.onclick=()=>{detailReady=false;loadDetail(e.id)};$('list').append(b)}
+   const newListKey=JSON.stringify(data.errors);if(listKey!==newListKey){listKey=newListKey;$('list').replaceChildren();for(const e of data.errors){const b=el('button',undefined,'issue');b.dataset.errorId=e.id;b.setAttribute('aria-current',String(e.id===selected));b.append(el('small','第 '+e.seq+' 条 · '+typeName(e.kind)+' · '+e.count+' 次'),el('strong',e.what));b.onclick=()=>{detailReady=false;loadDetail(e.id,true)};$('list').append(b)}
    if(!data.errors.length)$('list').append(el('div','没有匹配的问题。','empty'));}
    $('listCount').textContent='筛选后 '+data.total+' / 全部 '+total+' 个位置 · 本页 '+data.errors.length+' 条';prev.disabled=offset===0;next.disabled=offset+100>=data.total;
    banner.textContent='状态：'+({running:'采集中',finished:'已结束',interrupted:'已中断',failed:'失败'}[data.status.state]||'准备中')+' · 最近更新 '+new Date().toLocaleTimeString()+' · '+data.pending+' 条作者信息待查询；无作者信息含尚未完成的查询。'+(data.worker_error?' 源码后台查询失败：'+data.worker_error:'');
@@ -183,9 +212,9 @@ if(report.paged){
   finally{clearTimeout(timeout);if(version===requestId)pageController=null}
  }
  function schedule(){clearTimeout(timer);timer=setTimeout(async()=>{if(!pageController&&!document.hidden)await loadPage();schedule()},2000)}
- let inputTimer;const changed=()=>{clearTimeout(inputTimer);inputTimer=setTimeout(()=>loadPage(true),250)};
+ let inputTimer;const changed=()=>{saveFilters();clearTimeout(inputTimer);inputTimer=setTimeout(()=>loadPage(true),250)};
  $('search').oninput=changed;$('fileFilter').oninput=changed;$('authorFilter').onchange=()=>loadPage(true);
- $('resetFilters').onclick=()=>{kind='';$('search').value='';$('fileFilter').value='';$('authorFilter').value='';loadPage(true)};
+ $('resetFilters').onclick=()=>{savedFilters.variables=false;kind='';$('search').value='';$('fileFilter').value='';$('authorFilter').value='';loadPage(true)};
  prev.onclick=()=>{offset=Math.max(0,offset-100);loadPage()};next.onclick=()=>{offset+=100;loadPage()};
  loadPage();schedule();
 }
