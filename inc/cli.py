@@ -6,7 +6,7 @@ import subprocess
 import sys
 from .core import load_report, render_html, serve, run_debug, save_report
 from .collect import collect_run, print_summary, summary_data
-from .workflow import analyze_run
+from .workflow import analyze_run, refresh_capture_report
 from .versions import print_tool_versions
 
 def main(argv=None):
@@ -16,6 +16,8 @@ def main(argv=None):
     argv = argv[:argv.index("--")] if "--" in argv else argv
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
+    refresh = sub.add_parser('refresh-captures', help='更新已有 full-report.html 的变量关联与筛选，不重新运行程序')
+    refresh.add_argument('--output-dir', type=Path, required=True, help='包含 full-report.html 和 capture-updates.js 的结果目录')
     analyze = sub.add_parser('analyze', help='一条命令生成报告并启动自动变量采集；也可复用已有 XML')
     analyze.add_argument('--xml', type=Path, help='已有 XML，可不完整；省略则首次运行采集')
     analyze.add_argument('--output-dir', type=Path, required=True, help='结果目录；可复用，只清理清单登记的旧输出')
@@ -62,6 +64,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     args.command = command
     try:
+        if args.action == 'refresh-captures':
+            refresh_capture_report(args.output_dir)
+            print('已更新变量查看功能，请重新打开：' + str(args.output_dir.resolve() / 'full-report.html'))
+            return 0
         runtime_info = print_tool_versions(args.action, debug_enabled=args.action == 'serve' and bool(command))
         if args.action == 'analyze':
             return analyze_run(command, args.output_dir, xml_path=args.xml, project_dir=args.project_dir,

@@ -2,28 +2,36 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v4
+// aiv-stack-captures-v5
 (()=>{
  let running=true,timer;const captures=new Map();
  const status=document.getElementById('capture-status');
- const normalize=s=>String(s||'').replace(/\\/g,'/');
- const location=f=>normalize(f.local_file||((f.dir?f.dir+'/':'')+(f.file||'')))+':'+Number(f.line);
- const index=new Map();for(const e of report.errors){const f=e.stacks[0]?.frames[0];if(f){const key=location(f);if(!index.has(key))index.set(key,[]);index.get(key).push(e)}}
+ const normalize=s=>{const parts=[];for(const p of String(s||'').replace(/\\/g,'/').split('/')){if(p==='.')continue;if(p==='..'&&parts.length&&parts[parts.length-1]!=='..')parts.pop();else parts.push(p)}return parts.join('/')};
+ const paths=f=>[f.local_file,f.file&&(/^(\/|[A-Za-z]:)/.test(f.file)?f.file:(f.dir?f.dir+'/':'')+f.file)].filter(Boolean).map(normalize);
+ const index=new Map();for(const e of report.errors)for(const f of (e.stacks[0]?.frames||[]).slice(0,16))if(Number(f.line)>0)for(const p of paths(f)){const key=p+':'+Number(f.line);if(!index.has(key))index.set(key,new Set());index.get(key).add(e)}
  const message=s=>String(s||'').replace(/0x[0-9a-f]+/gi,'<address>').replace(/\s+/g,' ').trim().toLowerCase();
  function sameFrame(f,r){
-  const file=normalize(f.local_file||((f.dir?f.dir+'/':'')+(f.file||'')));
-  return !!file&&file===normalize(r.file)&&Number(f.line)>0&&Number(f.line)===Number(r.line)&&(!f.fn||f.fn===r.function);
+  return !!r.file&&paths(f).includes(normalize(r.file))&&Number(f.line)>0&&Number(f.line)===Number(r.line);
  }
  function match(e,snapshot){
   if(!snapshot.valgrind_error||!message(snapshot.valgrind_error).includes(message(e.what))||!e.what)return null;
   const frames=e.stacks[0]?.frames||[],runtime=snapshot.frames||[];
   if(!frames.length||!runtime.length)return null;
-  // Require the full recorded primary stack (within the 16-frame capture limit).
-  const n=Math.min(frames.length,16);
-  if(runtime.length<n)return null;
-  const result=new Map();
-  for(let i=0;i<n;i++){if(!sameFrame(frames[i],runtime[i]))return null;result.set('0:'+i,runtime[i])}
-  return result;
+  // Align source frames, ignoring unsymbolized wrappers. Never use the replay seed ID.
+  const source=frames.slice(0,16).map((f,i)=>({f,i})).filter(x=>paths(x.f).length&&Number(x.f.line)>0);
+  const actual=runtime.filter(r=>r.file&&Number(r.line)>0);
+  if(!source.length||!actual.length)return null;
+  const alignments=[];
+  for(let start=0;start<actual.length;start++){
+   if(!sameFrame(source[0].f,actual[start]))continue;
+   const result=new Map();let valid=true;
+   for(let j=0;j<source.length&&start+j<actual.length;j++){
+    if(!sameFrame(source[j].f,actual[start+j])){valid=false;break}
+    result.set('0:'+source[j].i,actual[start+j]);
+   }
+   if(valid&&result.size)alignments.push(result);
+  }
+  return alignments.length===1?alignments[0]:null;
  }
  function paint(e){
   const saved=captures.get(e.id);if(!saved)return;
@@ -32,7 +40,7 @@ SCRIPT = r'''
    let panel=[...node.children].find(n=>n.dataset?.captureVariables==='yes');
    if(!panel){panel=document.createElement('pre');panel.className='source';panel.dataset.captureVariables='yes';panel.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere';node.append(panel)}
    const lines=['步骤三实际变量（'+(saved.snapshot.captured_at||'本次运行')+'）'];
-   if(node.dataset.frameKey==='0:0'){
+   if(node.dataset.frameKey===saved.frames.keys().next().value){
     const memory=saved.snapshot.memory||{};
     if(memory.explanation)lines.push(memory.explanation);
     lines.push(memory.range_explanation||'当前诊断未提供足够的内存块边界，无法确定合法访问范围。');
@@ -51,7 +59,13 @@ SCRIPT = r'''
   }
  }
  const originalDetail=detail;detail=function(e){originalDetail(e);paint(e)};
- function hasVariables(id){const saved=captures.get(id);return saved&&[...saved.frames.values()].some(f=>f.variables?.length)}
+ function hasVariables(id){const saved=captures.get(id);return !!saved&&[...saved.frames.values()].some(f=>(f.variables||[]).some(v=>v.status==='available'||(!v.status&&v.value!==undefined&&v.value!==null)))}
+ const filter=document.createElement('input');filter.type='checkbox';filter.id='captureVariableFilter';filter.style.width='auto';
+ const label=document.createElement('label');label.htmlFor=filter.id;label.append(filter,document.createTextNode('仅显示已读出变量值的错误'));
+ const reset=document.getElementById('resetFilters');reset.before(label);
+ const originalMatching=matchingRows;matchingRows=function(...args){const rows=originalMatching(...args);return filter.checked?rows.filter(row=>hasVariables(row.e.id)):rows};
+ filter.onchange=()=>list();
+ const originalReset=reset.onclick;reset.onclick=function(...args){filter.checked=false;originalReset?.apply(this,args)};
  function badge(node,text){
   let mark=[...node.children].find(n=>n.dataset?.captureBadge==='yes');
   if(!mark){mark=document.createElement('span');mark.dataset.captureBadge='yes';mark.style.cssText='display:inline-block;font-size:12px;padding:2px 6px;border:1px solid #195943;border-radius:4px;color:#195943;background:#edf5ef;margin:4px';node.append(mark)}
@@ -69,24 +83,24 @@ SCRIPT = r'''
  const originalNav=nav;nav=function(){originalNav();markNavigation()};
  const originalList=list;list=function(...args){originalList(...args);markNavigation()};
  window.aivCaptureUpdate=data=>{
-  let unmatched=0;
+  let unmatched=0,missing=0,ambiguous=0,changed=false;
   for(const item of data.items){
-   const snapshot=item.snapshot;if(!snapshot){unmatched++;continue}
-   const first=snapshot.frames?.[0],candidates=first?(index.get(normalize(first.file)+':'+Number(first.line))||[]):[];
+   const snapshot=item.snapshot;if(!snapshot){unmatched++;missing++;continue}
+   const candidates=new Set();for(const r of snapshot.frames||[])for(const e of index.get(normalize(r.file)+':'+Number(r.line))||[])candidates.add(e);
    const matches=[];for(const e of candidates){const frames=match(e,snapshot);if(frames)matches.push({e,frames})}
-   if(matches.length!==1){unmatched++;continue}
-   const {e,frames}=matches[0];if(!captures.has(e.id))captures.set(e.id,{snapshot,frames});
+   if(matches.length!==1){unmatched++;if(matches.length>1)ambiguous++;continue}
+   const {e,frames}=matches[0];if(!captures.has(e.id)){captures.set(e.id,{snapshot,frames});changed=true}
   }
   const current=report.errors.find(e=>e.id===selected);if(current)paint(current);
-  markNavigation();
+  if(changed&&filter.checked)list();else markNavigation();
   running=data.live;
-  status.textContent=(running?'采集中':'采集已结束')+' · 已关联 '+captures.size+' 个错误；'+unmatched+' 个现场未能唯一匹配，未填入堆栈。原始现场保留在 captures 目录。';
+  status.textContent=(running?'采集中':'采集已结束')+' · 已关联 '+captures.size+' 个错误，其中 '+[...captures.keys()].filter(hasVariables).length+' 个已读出变量；'+unmatched+' 个现场未能唯一匹配（缺少现场数据 '+missing+'，多个候选 '+ambiguous+'，位置或错误描述不匹配 '+(unmatched-missing-ambiguous)+'）。原始现场保留在 captures 目录。';
  };
  function poll(){
   if(!running)return;
   const script=document.createElement('script');script.src='capture-updates.js?t='+Date.now();
   let finished=false;const finish=()=>{if(finished)return;finished=true;clearTimeout(timer);script.remove();if(running)timer=setTimeout(poll,2000)};
-  script.onload=finish;script.onerror=finish;timer=setTimeout(finish,10000);document.head.append(script);
+  script.onload=finish;script.onerror=()=>{status.textContent='无法加载 capture-updates.js，请将它与 full-report.html 放在同一目录。正在重试…';finish()};timer=setTimeout(finish,10000);document.head.append(script);
  }
  poll();
 })();

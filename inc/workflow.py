@@ -153,9 +153,24 @@ def save_combined_report(report, directory, *, base_html=None, previous=(), live
     update_file = directory / 'capture-updates.js.tmp'
     update_file.write_text('window.aivCaptureUpdate(' + json.dumps({'live':live,'items':items},ensure_ascii=True).replace('<','\\u003c') + ');', encoding='utf-8')
     update_file.replace(directory / 'capture-updates.js')
+    refresh_capture_report(directory, base_html=base_html, report=report)
+
+
+def refresh_capture_report(directory, *, base_html=None, report=None):
+    """Upgrade the viewer without rerunning the target or rewriting captured values."""
+    directory = Path(directory).resolve()
+    if not (directory / 'capture-updates.js').is_file():
+        raise ValueError('缺少步骤三变量文件 capture-updates.js：' + str(directory))
     output = directory / 'full-report.html'
-    content = output.read_text(encoding='utf-8') if output.exists() else (base_html or core.render_html(report, source_base=None))
-    if 'aiv-stack-captures-v4' in content:
+    if output.exists():
+        content = output.read_text(encoding='utf-8')
+    elif base_html:
+        content = base_html
+    elif report is not None:
+        content = core.render_html(report, source_base=None)
+    else:
+        content = (directory / 'report.html').read_text(encoding='utf-8')
+    if 'aiv-stack-captures-v5' in content:
         return
     content = re.sub(r'<section id="capture-results".*?</section>\s*(?:<script>.*?</script>)?', '', content, flags=re.S)
     content = content.replace('<a href="#capture-results">查看步骤三变量现场</a>', '')

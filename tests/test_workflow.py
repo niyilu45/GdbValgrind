@@ -9,6 +9,26 @@ from tests.test_aivalgrind import error
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_refresh_upgrades_viewer_without_changing_captured_data(self):
+        from inc.cli import main
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            old = '<html><body><p>source</p><section id="capture-results">old</section><script>// aiv-stack-captures-v4</script></body></html>'
+            (directory/'full-report.html').write_text(old, encoding='utf-8')
+            sidecar = b'window.aivCaptureUpdate({live:false,items:[]});'
+            (directory/'capture-updates.js').write_bytes(sidecar)
+            with patch.object(workflow, 'debug_error') as debug:
+                self.assertEqual(main(['refresh-captures', '--output-dir', root]), 0)
+                debug.assert_not_called()
+            html = (directory/'full-report.html').read_text(encoding='utf-8')
+            self.assertIn('aiv-stack-captures-v5', html)
+            self.assertNotIn('aiv-stack-captures-v4', html)
+            self.assertIn('<p>source</p>', html)
+            self.assertEqual(html.count('id="capture-results"'), 1)
+            self.assertEqual((directory/'capture-updates.js').read_bytes(), sidecar)
+            workflow.refresh_capture_report(directory)
+            self.assertEqual((directory/'full-report.html').read_text(encoding='utf-8'), html)
+
     def test_append_preserves_previous_files_and_report_bytes(self):
         from inc.output import prepare_capture_output, write_manifest
         with tempfile.TemporaryDirectory() as root:

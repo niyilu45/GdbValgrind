@@ -412,4 +412,14 @@ python3 -m unittest discover -s tests -v
 python3 /opt/GdbValgrind/aivalgrind.py analyze --step3-only --xml /data/run/errors.xml --base-report /data/run/report.html --output-dir /data/run -- /path/to/app
 ```
 
+变量显示在 `full-report.html` 对应的错误堆栈中。勾选“仅显示已读出变量值的错误”，可与文件、作者、问题类型筛选组合使用；被优化掉或读取失败的变量不计入此筛选。关联依据为错误描述及按顺序对齐的源码位置，兼容无源码的系统帧、原始编译路径与本地源码映射路径；有多个候选时保留未匹配状态，避免误关联。
+
+如果已有步骤三数据却显示“已关联 0 个错误”，更新脚本后可只升级报告的关联逻辑，无需重新采集（将以下路径换成实际安装位置和结果目录）：
+
+```bash
+python3 /opt/GdbValgrind/aivalgrind.py refresh-captures --output-dir /data/run
+```
+
+随后重新打开 `full-report.html`。此命令保留已有 `capture-updates.js` 和现场数据，仅更新报告查看功能。状态栏会区分现场数据缺失、多个候选和位置或描述不匹配；仍无法匹配时不会凭错误 ID 强行填入变量。
+
 有配套 `run.json` 时可省略 `--` 后的程序参数。`--base-report` 默认是 XML 同目录的 `report.html`，也可指定步骤二保存的其他 HTML。步骤三沿用该 HTML，不重新查询源码或 blame；每两秒检查新现场，变化时只更新配套 `capture-updates.js`；`full-report.html` 首次接入变量查看功能后不再重写。打开页面后通过同目录的 `capture-updates.js` 每两秒增量更新现场，不刷新整页，保留筛选、展开和阅读位置；结束或中断后保存最终版并停止轮询。实时浏览需同时保留该文件，变量独立保存在 `capture-updates.js` 和 `captures/session-*` 中，查看现场时请保留配套 JS 文件。报告顶部“查看步骤三变量现场”链接可查看独立数据文件中的变量、调用栈及内存诊断，不会将所有现场错误地关联到历史第一条错误。通过 SSH 使用时，需要浏览服务器上持续更新的文件（例如静态 HTTP 服务加 SSH 转发）；提前复制到本机的文件不会同步变化。
