@@ -107,7 +107,10 @@ const struct=runtime('bad.c');struct.frames[1].variables=[{name:'request',type:'
  member_details:{members:[{name:'length',type:'int',status:'available',value:'99',initialization:'undefined'},
  {name:'buffer',type:'char *',status:'available',value:'0x1234',initialization:'defined',note:'未读取指向的内容'},
  {name:'unknown',type:'int',status:'optimized_out',value:'unavailable',initialization:'unknown'}]}}];
-selected='bad';frame.children=[];window.aivCaptureUpdate({live:false,items:[{snapshot:struct}]});
+struct.frames[1].source_line={text:'use(request.length);',identifiers:'use(request.length);'};
+struct.frames[1].variables.push({name:'unrelated',status:'available',value:'456',initialization:{status:'undefined'}});
+struct.frames[2].variables=[{name:'parentOnly',status:'available',value:'parentB'}];
+selected='bad';frame.children=[];window.aivCaptureUpdate({live:false,items:[{id:'session-B/error-1',snapshot:struct}]});
 const text=frame.children[0].textContent;
 assert(text.includes('request.length（int） = 99'));
 assert(text.includes('未初始化，显示值不可靠'));
@@ -119,6 +122,8 @@ assert(all.textContent.includes('request.buffer'));
 const summary=panel.children.filter(n=>n!==all).map(n=>n.textContent).join('');
 assert(summary.includes('request.length'));
 assert(!summary.includes('request.buffer'));
+assert(!summary.includes('unrelated'));
+assert(all.textContent.includes('unrelated'));
 const rows=all.children[1].children;
 const member=name=>rows.find(n=>n.textContent.includes(name));
 assert.strictEqual(member('request.length').dataset.variableState,'abnormal');
@@ -128,6 +133,23 @@ assert.strictEqual(member('request.length').style.color,'#9f3029');
 assert.strictEqual(member('request.buffer').style.color,'#195943');
 assert.strictEqual(member('request.unknown').style.color,'#805000');
 assert(member('request.unknown').textContent.includes('【不确定】'));
+// Two errors share a caller location: only the selected error's snapshot may
+// supply either frame, even when the replay seed ID is identical.
+const parentFrame=new Element();parentFrame.dataset.frameKey='0:2';nodes.detail.append(parentFrame);
+window.aivCaptureUpdate({live:false,items:[]});
+assert(parentFrame.textContent.includes('parentB'));assert(!frame.textContent.includes('parentB'));
+selected='one';frame.children=[];parentFrame.children=[];
+detail(report.errors[0]);
+assert(frame.textContent.includes('实际值：5'));assert(!frame.textContent.includes('request.length'));
+assert(!parentFrame.textContent.includes('parentB'));
+selected='bad';frame.children=[];parentFrame.children=[];detail(report.errors[1]);
+assert(frame.textContent.includes('session-B/error-1'));assert(parentFrame.textContent.includes('parentB'));
+// Changed source text disables line-level claims instead of guessing.
+report.errors[1].stacks[0].frames[1].source=[{number:10,text:'different_statement();'}];
+frame.children=[];detail(report.errors[1]);
+const changedPanel=frame.children[0],changedAll=changedPanel.children.find(n=>n.dataset?.captureAllVariables==='yes');
+assert(changedPanel.textContent.includes('源码行不同'));
+assert(!changedPanel.children.filter(n=>n!==changedAll).map(n=>n.textContent).join('').includes('request.length = 99'));
 '''
         script = SCRIPT.replace('<script>', '').replace('</script>', '')
         result = subprocess.run(['node', '-e', setup+script+checks], capture_output=True, text=True, encoding='utf-8')

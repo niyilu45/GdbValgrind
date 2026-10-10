@@ -170,7 +170,7 @@ def refresh_capture_report(directory, *, base_html=None, report=None):
         content = core.render_html(report, source_base=None)
     else:
         content = (directory / 'report.html').read_text(encoding='utf-8')
-    if 'aiv-stack-captures-v12' in content:
+    if 'aiv-stack-captures-v13' in content:
         return
     from .templates import SOURCE_VIEW_STYLE, STACK_SCROLL_FUNCTION, SELECT_ERROR_FUNCTION, FILTER_STATE_SCRIPT
     if 'id="report-data"' in content:

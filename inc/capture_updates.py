@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v12
+// aiv-stack-captures-v13
 (()=>{
  let running=true,timer;const captures=new Map();
  const status=document.getElementById('capture-status');
@@ -84,8 +84,30 @@ SCRIPT = r'''
    };
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
+   add('p','所属报告错误：'+e.id+' · 采集现场：'+(saved.captureId||'旧数据未提供现场文件名')).className='meta';
    add('p','现场来源：'+(frame.function||'未知函数')+' · '+(frame.file||'未知文件')+':'+(frame.line||'?')+' · GDB 帧 #'+(frame.index??'?')).className='meta';
    add('p',saved.snapshot.captured_at||'本次运行').className='meta';
+   const [si,fi]=node.dataset.frameKey.split(':').map(Number),recorded=e.stacks[si]?.frames[fi];
+   const shownLine=recorded?.source?.find(row=>Number(row.number)===Number(recorded.line))?.text;
+   const capturedLine=frame.source_line?.text;
+   const sourceChanged=typeof shownLine==='string'&&typeof capturedLine==='string'&&shownLine.trim()!==capturedLine.trim();
+   const identifiers=!sourceChanged&&typeof frame.source_line?.identifiers==='string'?frame.source_line.identifiers:'';
+   const code=identifiers.replace(/\/\*.*?\*\/|\/\/.*$|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g,' ').replace(/\s+/g,'');
+   const onLine=name=>{const escaped=String(name).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');return !!code&&new RegExp('(?<![\\w$.])'+escaped+'(?![\\w$])').test(code)};
+   add('p',sourceChanged?'报告源码与步骤三采集时的源码行不同，无法确认本行变量关系；下方仅保留该函数作用域的现场值。':identifiers?'采集包含整个函数作用域；下方只将源码本行出现的变量列为本行相关项。文本出现不证明实际读取或导致错误。':'此现场没有可核对的源码行，无法判断哪些变量属于报错行；请展开作用域变量查看。').className='meta';
+   if(capturedLine)add('pre','采集时源码：'+capturedLine).style.cssText='white-space:pre-wrap;overflow-wrap:anywhere';
+   add('h4','本行源码中出现的变量');
+   const relevant=add('pre','');relevant.className='source';relevant.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;padding:12px';let relatedCount=0;
+   for(const v of frame.variables||[]){
+    if(!onLine(v.name))continue;
+    const members=v.member_details?.members;
+    if(members){
+     let memberCount=0;
+     for(const m of members){const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;if(!onLine(name))continue;const row=add('span',name+' = '+m.value+'；'+(initLabels[m.initialization]||'初始化状态无法确定'),relevant);row.style.display='block';colorState(row,variableState(m.initialization,m.status,v.initialization?.complete));memberCount++;relatedCount++}
+     if(!memberCount){add('span',v.name+'：本行出现此对象，但无法确认具体成员；完整值见下方作用域变量。\n',relevant);relatedCount++}
+    }else{for(const row of variableLines(v)){const line=add('span',typeof row==='string'?row:row.text,relevant);line.style.display='block';if(row.state)colorState(line,row.state)}relatedCount++}
+   }
+   if(!relatedCount)relevant.textContent='未找到可与本行直接对应的已采集变量。宏、多行表达式、全局变量或缺少源码可能导致无法关联。';
    const legend=add('p','');legend.className='meta';
    for(const state of Object.keys(stateStyles)){const tag=add('span',' ',legend);colorState(tag,state);tag.style.marginRight='10px'}
    add('p','颜色仅表示已检查的初始化或索引状态；绿色不代表业务取值正确，也不证明指针指向的内存可访问。').className='meta';
@@ -96,7 +118,7 @@ SCRIPT = r'''
     lines.push(memory.range_explanation||'当前诊断未提供足够的内存块边界，无法确定合法访问范围。');
    }
    if(lines.length)add('p',lines.join('\n')).style.whiteSpace='pre-wrap';
-   add('h4','需要重点检查的变量');
+   add('h4','本行需要核查的异常变量');
    const warnings=[];
    const suspicious=s=>['undefined','partially_undefined','unaddressable'].includes(s);
    for(const v of frame.variables||[]){
@@ -107,17 +129,17 @@ SCRIPT = r'''
      const state=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);
      if(!suspicious(state))continue;
      const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;
-     warnings.push(name+'：'+initLabels[state]);found=true;
+     if(onLine(name))warnings.push(name+'：'+initLabels[state]);found=true;
     }
-    if(!found&&suspicious(info.observed_status||info.status))warnings.push(v.name+'：'+(initLabels[info.observed_status||info.status]||'需要检查'));
+    if(!members.length&&!found&&onLine(v.name)&&suspicious(info.observed_status||info.status))warnings.push(v.name+'：'+(initLabels[info.observed_status||info.status]||'需要检查'));
    }
-   for(const level of frame.index_analysis?.levels||[])if(level.status==='out_of_bounds')warnings.push(level.expression+'：索引越界，实际 '+level.actual_index+'；合法范围 '+(level.bounds?level.bounds.join('～'):'未知'));
+   for(const level of frame.index_analysis?.levels||[])if(identifiers&&level.status==='out_of_bounds'&&code.includes(level.expression.replace(/\s+/g,'')))warnings.push(level.expression+'：索引越界，实际 '+level.actual_index+'；合法范围 '+(level.bounds?level.bounds.join('～'):'未知'));
    if(warnings.length){
     const ul=add('ul','');for(const warning of [...new Set(warnings)])colorState(add('li',warning,ul),'abnormal');
     add('p','以上是需核查的现场异常，不代表已确认的错误原因。请结合报错行检查赋值与访问过程。').className='meta';
    }else colorState(add('p','本帧尚未定位到具体异常变量；不表示全部变量正常。可展开下方信息核查。'),'uncertain');
    const all=add('details','');all.dataset.captureAllVariables='yes';
-   add('summary','完整变量信息（'+(frame.variables||[]).length+' 个变量，点击展开）',all);
+   add('summary','函数作用域的全部变量（'+(frame.variables||[]).length+' 个，包含未在本行出现的变量）',all);
    const values=[];for(const v of frame.variables||[])values.push(...variableLines(v));
    if(!values.length)values.push(frame.note||'此帧没有可读取的变量');
    const valueBlock=add('pre','',all);valueBlock.className='source';valueBlock.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;padding:12px';
@@ -162,7 +184,7 @@ SCRIPT = r'''
    const candidates=new Set();for(const r of snapshot.frames||[])for(const e of index.get(normalize(r.file)+':'+Number(r.line))||[])candidates.add(e);
    const matches=[];for(const e of candidates){const frames=match(e,snapshot);if(frames)matches.push({e,frames})}
    if(matches.length!==1){unmatched++;if(matches.length>1)ambiguous++;continue}
-   const {e,frames}=matches[0];if(!captures.has(e.id)){captures.set(e.id,{snapshot,frames});changed=true}
+   const {e,frames}=matches[0];if(!captures.has(e.id)){captures.set(e.id,{snapshot,frames,captureId:item.id});changed=true}
   }
   const current=report.errors.find(e=>e.id===selected);if(current)paint(current);
   if(changed&&filter.checked)list();else markNavigation();
