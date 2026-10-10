@@ -36,19 +36,22 @@ class ReportProgress:
         self.thread.start()
         return self
 
-    def render(self):
+    def render(self, final=False):
         now = time.monotonic()
         message = '[%s] %s | 本阶段 %.1fs | 总耗时 %.1fs' % (self.task, self.stage, now-self.changed, now-self.start)
         if sys.stdout.isatty():
-            width = max(20, shutil.get_terminal_size().columns-1)
-            print('\r' + clip(message,width).ljust(width), end='', flush=True)
-        else:
+            width = max(1, shutil.get_terminal_size().columns-1)
+            line = clip(message,width)
+            used = sum(0 if unicodedata.combining(c) else
+                       2 if unicodedata.east_asian_width(c) in ('W','F') else 1 for c in line)
+            print('\r' + line + ' ' * (width-used), end='', flush=True)
+        elif final:
             print(message, flush=True)
 
     def __exit__(self, exc_type, exc, tb):
         self.stop.set()
         self.thread.join(timeout=1)
-        self.render()
+        self.render(final=True)
         if sys.stdout.isatty():
             print()
         print('[%s] %s；总耗时 %.1fs' % (self.task, '已中断/失败' if exc_type else '完成', time.monotonic()-self.start), flush=True)
