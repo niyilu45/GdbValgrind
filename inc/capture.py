@@ -49,6 +49,16 @@ def memory_facts(message):
             facts['explanation'] = '访问起始地址位于分配块起始地址之前 %s 字节，属于块首越界。' % distance
         elif 'access_bytes' in facts and facts['distance_bytes'] + facts['access_bytes'] > facts['block_bytes']:
             facts['explanation'] = '访问从块内偏移 %s 字节开始，但访问长度超出了分配块末尾。' % distance
+        if 'access_bytes' in facts:
+            length, width, distance = facts['block_bytes'], facts['access_bytes'], facts['distance_bytes']
+            offset = length + distance if facts['relation']=='after' else -distance if facts['relation']=='before' else distance
+            facts['actual_offset_bytes'] = offset
+            facts['actual_last_offset_bytes'] = offset + width - 1
+            freed = facts['block_state'].startswith('free')
+            facts['valid_start_offset_bytes'] = [0, length-width] if not freed and width>0 and width<=length else None
+            valid = facts['valid_start_offset_bytes']
+            allowed = ('0 到 %d 字节' % valid[1]) if valid else '无（内存已释放或访问宽度超过块大小）'
+            facts['range_explanation'] = '相对内存块起点：本次访问 %d 字节，合法起始偏移为 %s；实际起始偏移 %d，覆盖偏移 %d 到 %d。此范围是内存块边界，不代表变量的业务取值范围或数组下标。' % (width,allowed,offset,offset,offset+width-1)
     return facts
 
 def capture_identity(message):

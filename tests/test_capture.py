@@ -13,6 +13,17 @@ from inc import cli
 
 
 class CaptureTests(unittest.TestCase):
+    def test_memory_access_allowed_and_actual_ranges(self):
+        facts = self.scope['memory_facts']
+        for relation, distance, expected in [('after',0,40),('before',4,-4),('inside',38,38)]:
+            result = facts('Invalid write of size 4\nAddress 0x1234 is %d bytes %s a block of size 40 alloc\'d' % (distance,relation))
+            self.assertEqual(result['valid_start_offset_bytes'],[0,36])
+            self.assertEqual(result['actual_offset_bytes'],expected)
+            self.assertEqual(result['actual_last_offset_bytes'],expected+3)
+        freed = facts('Invalid read of size 4\nAddress 0x1234 is 0 bytes inside a block of size 40 free\'d')
+        self.assertIsNone(freed['valid_start_offset_bytes'])
+        self.assertNotIn('valid_start_offset_bytes', facts('Invalid read of size 4'))
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
