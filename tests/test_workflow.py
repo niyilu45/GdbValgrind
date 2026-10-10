@@ -3,16 +3,22 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 from inc import workflow
+import xml.etree.ElementTree as ET
+from tests.test_aivalgrind import error
 
 
 class WorkflowTests(unittest.TestCase):
-    def run_case(self, *, saved=False, interrupted=False, errors=True, unsupported=False):
+    def run_case(self, *, saved=False, interrupted=False, errors=True, unsupported=False, report_interrupted=False, project=False):
         with tempfile.TemporaryDirectory() as root:
             output = Path(root) / 'new-run'
             xml = Path(root) / 'saved.xml'
-            report = {'errors': [{'id': 'first'}] if errors else [],
-                      'debug_command': {'target_args': ['/srv/app', 'arg'],
-                      'base_args': ['--cwd', '/srv', '--stdin-file', '/srv/input']}}
+            report = workflow.core.report_from_root(ET.fromstring('<valgrindoutput>'+ (error('1') if errors else '')+'</valgrindoutput>'), str(xml))
+            report['debug_command'] = {'target_args': ['/srv/app', 'arg'],
+                      'base_args': ['--cwd', '/srv', '--stdin-file', '/srv/input']}
+            (Path(root) / 'demo.c').write_text('int marker;\n' * 30, encoding='utf-8')
+            def debug(*args):
+                self.assertIn('report-data', (output / 'report.html').read_text(encoding='utf-8'))
+                return 0
             manager = MagicMock()
             probe = manager.__enter__.return_value.launch.return_value
             probe.communicate.return_value = ('', 'Python scripting is not supported' if unsupported else '')
@@ -22,15 +28,22 @@ class WorkflowTests(unittest.TestCase):
                 if interrupted:
                     raise KeyboardInterrupt()
                 return 0
-            with patch.object(workflow.core, 'check_debug_environment'), patch.object(workflow.sys.stdin, 'isatty', return_value=True), patch.object(workflow.shutil, 'which', return_value='/usr/bin/gdb'), patch.object(workflow, 'ProcessSession', return_value=manager), patch.object(workflow.core, 'load_report', return_value=report), patch.object(workflow, 'collect_run', side_effect=collect) as first, patch.object(workflow, 'export_report', side_effect=AssertionError('analysis must not export HTML')), patch.object(workflow, 'debug_error', return_value=0) as replay:
-                if interrupted or unsupported:
-                    with self.assertRaises(KeyboardInterrupt if interrupted else ValueError):
+            with patch.object(workflow.core, 'check_debug_environment'), patch.object(workflow.sys.stdin, 'isatty', return_value=True), patch.object(workflow.shutil, 'which', return_value='/usr/bin/gdb'), patch.object(workflow, 'ProcessSession', return_value=manager), patch.object(workflow.core, 'load_report', return_value=report), patch.object(workflow, 'collect_run', side_effect=collect) as first, patch.object(workflow.core, 'save_report', wraps=workflow.core.save_report, side_effect=KeyboardInterrupt() if report_interrupted else None), patch.object(workflow, 'debug_error', side_effect=debug) as replay:
+                if interrupted or unsupported or report_interrupted:
+                    with self.assertRaises(KeyboardInterrupt if interrupted or report_interrupted else ValueError):
                         workflow.analyze_run(['/srv/app'], output)
                     replay.assert_not_called()
                     if unsupported:
                         first.assert_not_called()
                 else:
-                    self.assertEqual(workflow.analyze_run([] if saved else ['/srv/app'], output, xml_path=xml if saved else None), 0)
+                    self.assertEqual(workflow.analyze_run([] if saved else ['/srv/app'], output, xml_path=xml if saved else None, project_dir=root if project else None), 0)
+                    html = (output / 'report.html').read_text(encoding='utf-8')
+                    self.assertIn('report-data', html)
+                    if project:
+                        self.assertIn('int marker;', html)
+                    if errors:
+                        self.assertIn(report['errors'][0]['id'], html)
+                    self.assertFalse((output / 'report.html.tmp').exists())
                     self.assertEqual(first.call_count, 0 if saved else 1)
                     self.assertEqual(replay.call_count, 1 if errors else 0)
                     if saved and errors:
@@ -45,3 +58,6 @@ class WorkflowTests(unittest.TestCase):
     def test_interrupt_never_restarts_target(self): self.run_case(interrupted=True)
     def test_no_errors_skips_replay(self): self.run_case(errors=False)
     def test_unsupported_gdb_fails_before_collection(self): self.run_case(unsupported=True)
+
+    def test_report_interrupt_never_starts_replay(self): self.run_case(report_interrupted=True)
+    def test_report_contains_source_context(self): self.run_case(project=True)

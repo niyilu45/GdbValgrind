@@ -16,7 +16,9 @@ class ReportNavigation:
         self.breakpoints = []
         self.active = None
         for entry in config['entries']:
-            if entry['default']:
+            # Automatic capture stops on Valgrind errors, not historical source
+            # locations (which may belong to unavailable system library symbols).
+            if not config['auto_values'] and entry['default']:
                 bp = ReportLocation(self, entry['id'], entry['default'])
                 self.breakpoints.append(bp)
                 if entry['id'] == self.target:

@@ -52,6 +52,21 @@ class NavigationTests(unittest.TestCase):
         self.assertTrue(self.nav.active.stop())
         self.assertEqual(self.nav.current, 'c')
 
+    def test_auto_capture_does_not_install_historical_breakpoints(self):
+        config = {**self.config, 'auto_values': True}
+        config['entries'] = [
+            {'id':'library', 'order':1, 'default':'-source /gcc/libstdc++/vector.cc -line 10', 'frames':{}},
+            {'id':'symbol', 'order':2, 'default':'-function mpn_addmul_l', 'frames':{}}]
+        with patch.object(self.scope['ReportLocation'], '__init__',
+                          side_effect=AssertionError('automatic capture must not set source breakpoints')):
+            nav = self.scope['ReportNavigation'](config)
+        self.assertEqual(nav.breakpoints, [])
+        self.assertIsNone(nav.active)
+        nav.navigate('symbol')
+        self.assertEqual(len(nav.breakpoints), 1)
+        self.assertEqual(nav.active.spec, '-function mpn_addmul_l')
+        self.gdb.execute.assert_called_once_with('continue')
+
     def test_backward_no_keeps_paused_session(self):
         self.nav.active.stop()
         active = self.nav.active
