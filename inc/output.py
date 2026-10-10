@@ -5,7 +5,7 @@ from pathlib import Path
 
 MANIFEST = '.aivalgrind-files.json'
 COLLECTION_FILES = ['errors.xml', 'run.json', 'status.json', 'status.json.tmp',
-                    'program.log', 'launcher.log', 'valgrind.log', 'report.html', 'report.html.tmp', 'diagnostics.log',
+                    'program.log', 'launcher.log', 'valgrind.log', 'report.html', 'report.html.tmp', 'full-report.html', 'full-report.html.tmp', 'diagnostics.log',
                     'results.sqlite3', 'results.sqlite3-wal', 'results.sqlite3-shm']
 
 

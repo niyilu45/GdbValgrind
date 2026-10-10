@@ -1,5 +1,6 @@
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 from inc import workflow
@@ -8,7 +9,7 @@ from tests.test_aivalgrind import error
 
 
 class WorkflowTests(unittest.TestCase):
-    def run_case(self, *, saved=False, interrupted=False, errors=True, unsupported=False, report_interrupted=False, project=False, pause=False, tty=True):
+    def run_case(self, *, saved=False, interrupted=False, errors=True, unsupported=False, report_interrupted=False, project=False, pause=False, tty=True, step3=False):
         with tempfile.TemporaryDirectory() as root:
             output = Path(root) / 'new-run'
             xml = Path(root) / 'saved.xml'
@@ -16,8 +17,25 @@ class WorkflowTests(unittest.TestCase):
             report['debug_command'] = {'target_args': ['/srv/app', 'arg'],
                       'base_args': ['--cwd', '/srv', '--stdin-file', '/srv/input']}
             (Path(root) / 'demo.c').write_text('int marker;\n' * 30, encoding='utf-8')
+            if step3:
+                (Path(root) / 'report.html').write_text(workflow.core.render_html(report).replace('</body>', '<p>int marker;</p></body>'), encoding='utf-8')
             def debug(*args):
-                self.assertIn('report-data', (output / 'report.html').read_text(encoding='utf-8'))
+                if step3:
+                    self.assertFalse((output / 'report.html').exists())
+                else:
+                    self.assertIn('report-data', (output / 'report.html').read_text(encoding='utf-8'))
+                session = output / 'captures' / 'session-test'
+                session.mkdir(parents=True)
+                (session / 'error-1.txt').write_text('value = <42>', encoding='utf-8')
+                if step3:
+                    deadline = time.monotonic()+5
+                    while time.monotonic()<deadline:
+                        live = (output / 'full-report.html').read_text(encoding='utf-8')
+                        if 'value = &lt;42&gt;' in live:
+                            break
+                        time.sleep(.05)
+                    self.assertIn('value = &lt;42&gt;', live)
+                    self.assertIn('http-equiv="refresh"', live)
                 return 0
             manager = MagicMock()
             probe = manager.__enter__.return_value.launch.return_value
@@ -36,8 +54,8 @@ class WorkflowTests(unittest.TestCase):
                     if unsupported:
                         first.assert_not_called()
                 else:
-                    self.assertEqual(workflow.analyze_run([] if saved else ['/srv/app'], output, xml_path=xml if saved else None, project_dir=root if project else None, pause_on_error=pause), 0)
-                    html = (output / 'report.html').read_text(encoding='utf-8')
+                    self.assertEqual(workflow.analyze_run([] if saved else ['/srv/app'], output, xml_path=xml if saved else None, project_dir=root if project else None, pause_on_error=pause, step3_only=step3), 0)
+                    html = (output / ('full-report.html' if step3 else 'report.html')).read_text(encoding='utf-8')
                     self.assertIn('report-data', html)
                     if project:
                         self.assertIn('int marker;', html)
@@ -47,6 +65,10 @@ class WorkflowTests(unittest.TestCase):
                     self.assertEqual(first.call_count, 0 if saved else 1)
                     self.assertEqual(replay.call_count, 1 if errors else 0)
                     if errors:
+                        combined = (output / 'full-report.html').read_text(encoding='utf-8')
+                        self.assertIn('value = &lt;42&gt;', combined)
+                        self.assertIn('report-data', combined)
+                        self.assertNotIn('http-equiv="refresh"', combined)
                         self.assertEqual(replay.call_args.args[2].auto_continue, not pause)
                     if saved and errors:
                         options = replay.call_args.args[2]
@@ -66,3 +88,5 @@ class WorkflowTests(unittest.TestCase):
 
     def test_default_automatic_analysis_without_tty(self): self.run_case(saved=True, tty=False)
     def test_pause_mode_preserves_interactive_debugging(self): self.run_case(pause=True)
+
+    def test_step3_only_merges_capture(self): self.run_case(saved=True, step3=True, project=True)

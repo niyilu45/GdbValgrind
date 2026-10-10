@@ -3,6 +3,8 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import html
+import threading
 
 from . import core
 from .api import DebugOptions, debug_error
@@ -14,7 +16,7 @@ from .store import load_replay
 
 
 def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=None, stdin_file=None, live_port=None,
-                plain_terminal=False, output_mode='pty', runtime_info=None, pause_on_error=False):
+                plain_terminal=False, output_mode='pty', runtime_info=None, pause_on_error=False, step3_only=False, base_report=None):
     """Collect if needed, load error locations, then replay with value capture.
 
     Capture and continue by default; pause_on_error opts into interactive GDB.
@@ -23,6 +25,14 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
     directory = Path(output_dir).resolve()
     source = Path(xml_path).resolve() if xml_path else None
     print('analyze 流程版本: SQLite 分页 / 步骤 2 自动生成完整 HTML / 步骤 3 默认自动继续\n运行代码: ' + str(Path(__file__).resolve()),flush=True)
+    if step3_only and source is None:
+        raise ValueError("--step3-only 需要 --xml 指定已有报告")
+    base_path = Path(base_report).resolve() if base_report else (source.parent / 'report.html' if step3_only else None)
+    base_html = None
+    if step3_only:
+        if not base_path.is_file():
+            raise ValueError('需要步骤二 HTML，请使用 --base-report 指定：' + str(base_path))
+        base_html = base_path.read_text(encoding='utf-8')
     report = None
     if source:
         print('正在解析已有 XML 和错误位置（不等待源码或 blame）……', flush=True)
@@ -53,14 +63,15 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
         if probe.returncode:
             raise ValueError('自动采集需要带 Python 支持的 GDB，未启动目标程序。\n' + out + err)
     if source:
-        prepare_output(directory, ['report.html', 'report.html.tmp'],
-                       [source, source.parent / 'run.json', stdin_file, Path(cwd or '.') / command[0]])
+        prepare_output(directory, (['full-report.html', 'full-report.html.tmp'] if step3_only else ['report.html', 'report.html.tmp', 'full-report.html', 'full-report.html.tmp']),
+                       [source, source.parent / 'run.json', base_path, stdin_file, Path(cwd or '.') / command[0]])
     else:
         print('步骤 1/3：首次运行 Valgrind，保存 XML。此流程随后会再次运行目标程序。', flush=True)
         collect_run(command, directory, cwd=cwd, stdin_file=stdin_file, live_port=live_port, project_dir=project_dir,
                     plain_terminal=plain_terminal, output_mode=output_mode, runtime_info=runtime_info)
         source = directory / 'errors.xml'
-    print('步骤 2/3：生成完整 HTML 报告（含错误堆栈；提供工程目录时加载源码和 blame）。', flush=True)
+    if not step3_only:
+        print('步骤 2/3：生成完整 HTML 报告（含错误堆栈；提供工程目录时加载源码和 blame）。', flush=True)
     if report is None:
         with ReportProgress('步骤 2/3：准备复现位置') as progress:
             database=directory/'results.sqlite3'
@@ -70,14 +81,15 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
             else:
                 report=core.load_report(source,progress=progress)
     report['project'] = str(Path(project_dir).resolve()) if project_dir else ''
-    with ReportProgress('步骤 2/3：生成完整 HTML') as progress:
-        if project_dir:
-            core.enrich_parallel(report, project_dir, workers=4, progress=progress,reuse=True)
-        progress('序列化并写入 HTML')
-        temporary = directory / 'report.html.tmp'
-        core.save_report(report, temporary)
-        temporary.replace(directory / 'report.html')
-    print('完整报告已生成，可直接用浏览器打开：' + str(directory / 'report.html'), flush=True)
+    if not step3_only:
+        with ReportProgress('步骤 2/3：生成完整 HTML') as progress:
+            if project_dir:
+                core.enrich_parallel(report, project_dir, workers=4, progress=progress,reuse=True)
+            progress('序列化并写入 HTML')
+            temporary = directory / 'report.html.tmp'
+            core.save_report(report, temporary)
+            temporary.replace(directory / 'report.html')
+        print('完整报告已生成，可直接用浏览器打开：' + str(directory / 'report.html'), flush=True)
     if not report['errors']:
         print('报告中没有已完整记录的内存错误，不启动复现采集。', flush=True)
         return 0
@@ -88,4 +100,54 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
         print('保存现场后自动继续，程序结束后自动退出；无需输入 continue。Ctrl+C 终止整个流程。', flush=True)
     options = DebugOptions(command, cwd=cwd, stdin_file=stdin_file, auto_values=True,
                            capture_dir=directory / 'captures', auto_continue=not pause_on_error)
-    return debug_error(report, report['errors'][0]['id'], options)
+    base_html = base_html or (directory / 'report.html').read_text(encoding='utf-8')
+    previous = set((directory / 'captures').glob('session-*/error-*.txt'))
+    stop = threading.Event()
+    last_snapshot = None
+    def update(live):
+        nonlocal last_snapshot
+        snapshot = tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size)
+                         for p in sorted((directory / 'captures').glob('session-*/error-*.txt')) if p not in previous)
+        if live and snapshot == last_snapshot:
+            return
+        save_combined_report(report, directory, base_html=base_html, previous=previous, live=live)
+        last_snapshot = snapshot
+    def refresh():
+        while not stop.wait(2):
+            try:
+                update(True)
+            except OSError as exc:
+                print('合并报告暂未更新：' + str(exc), file=sys.stderr, flush=True)
+    update(True)
+    print('实时合并报告（每 3 秒刷新）：' + str(directory / 'full-report.html'), flush=True)
+    worker = threading.Thread(target=refresh, name='aivalgrind-combined-report', daemon=True)
+    worker.start()
+    try:
+        return debug_error(report, report['errors'][0]['id'], options)
+    finally:
+        stop.set()
+        worker.join()
+        with ReportProgress('合并步骤三现场报告') as progress:
+            progress('写入完整报告和已保存的变量现场')
+            update(False)
+        print('合并报告：' + str(directory / 'full-report.html'), flush=True)
+
+
+def save_combined_report(report, directory, *, base_html=None, previous=(), live=False):
+    """Embed saved capture text, without incorrectly matching replay errors to XML IDs."""
+    sections = []
+    for path in sorted((directory / 'captures').glob('session-*/error-*.txt')):
+        if path in previous:
+            continue
+        sections.append('<details open><summary>' + html.escape(str(path.relative_to(directory))) +
+                        '</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' +
+                        html.escape(path.read_text(encoding='utf-8', errors='replace')) + '</pre></details>')
+    content = base_html or core.render_html(report, source_base=None)
+    appendix = '<section id="capture-results" style="padding:24px"><h2>步骤三：本次运行的变量现场</h2><p>本次实际错误不保证与历史 XML 错误一一对应。</p>' + (''.join(sections) or '<p>本次没有保存变量现场。</p>') + '</section>'
+    content = content.replace('</body>', appendix + '</body>')
+    content = content.replace('<body>', '<body><a href="#capture-results">查看步骤三变量现场</a>', 1)
+    if live:
+        content = content.replace('</head>', '<meta http-equiv="refresh" content="3"></head>', 1)
+    temporary = directory / 'full-report.html.tmp'
+    temporary.write_text(content, encoding='utf-8')
+    temporary.replace(directory / 'full-report.html')
