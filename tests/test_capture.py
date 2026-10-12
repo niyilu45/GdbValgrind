@@ -13,6 +13,69 @@ from inc import cli
 
 
 class CaptureTests(unittest.TestCase):
+    def array_prefix(self, raw, index, high, element=None, budget=None):
+        element = element or self.value_type()
+        array = SimpleNamespace(address=0x100, type=self.value_type(6, (high+1)*element.sizeof, target=lambda: element))
+        calls = []
+        def execute(command, **kwargs):
+            words = command.split()
+            address, length = int(words[-2], 16), int(words[-1])
+            calls.append((address, length))
+            return ''.join(raw[address-0x100:address-0x100+length])
+        self.gdb.execute = execute
+        result = self.scope['check_array_prefix'](array, index, 0, high, budget if budget is not None else {})
+        return result, calls
+
+    def test_array_prefix_scans_beyond_256_bytes_and_merges_ranges(self):
+        raw = ['00'] * 1200
+        raw[1024] = 'ff'
+        raw[1028] = 'ff'
+        raw[1196] = '__'
+        result, calls = self.array_prefix(raw, 299, 299)
+        self.assertEqual(calls, [(0x100, 1200)])
+        self.assertTrue(result['coverage_complete'])
+        self.assertEqual(result['checked_elements'], 300)
+        self.assertEqual(result['ranges'], [
+            {'start':0,'end':255,'status':'defined'},
+            {'start':256,'end':257,'status':'undefined'},
+            {'start':258,'end':298,'status':'defined'},
+            {'start':299,'end':299,'status':'unaddressable'}])
+
+    def test_array_prefix_never_reads_out_of_bounds_and_marks_budget_limit(self):
+        result, calls = self.array_prefix(['00']*40, 100, 9)
+        self.assertEqual(calls, [(0x100, 40)])
+        self.assertEqual(result['ranges'][-1], {'start':10,'end':100,'status':'out_of_bounds'})
+        budget = {'array_prefix': {'queries':10,'bytes':12,'ranges':512}}
+        result, calls = self.array_prefix(['00']*40, 9, 9, budget=budget)
+        self.assertFalse(result['coverage_complete'])
+        self.assertEqual(result['checked_elements'], 3)
+        self.assertEqual(result['ranges'][-1], {'start':3,'end':9,'status':'unchecked'})
+        self.assertEqual(calls, [(0x100, 12)])
+        result, calls = self.array_prefix(['00']*40, -1, 9)
+        self.assertEqual(calls, [])
+        self.assertFalse(result['coverage_complete'])
+
+    def test_array_prefix_merges_across_batch_boundaries(self):
+        result, calls = self.array_prefix(['00']*4800, 1199, 1199)
+        self.assertEqual(calls, [(0x100,4096),(0x1100,704)])
+        self.assertTrue(result['coverage_complete'])
+        self.assertEqual(result['ranges'], [{'start':0,'end':1199,'status':'defined'}])
+
+    def test_array_prefix_struct_padding_is_not_uninitialized_member(self):
+        fields = [SimpleNamespace(name='x',bitpos=0,bitsize=0,type=self.value_type(5,1)),
+                  SimpleNamespace(name='y',bitpos=32,bitsize=0,type=self.value_type())]
+        element = self.value_type(7,8,fields=lambda:fields)
+        raw = ['00'] + ['ff']*3 + ['00']*4
+        result, calls = self.array_prefix(raw*100, 99, 99, element)
+        self.assertEqual(result['ranges'], [{'start':0,'end':99,'status':'defined'}])
+        self.assertEqual(calls, [(0x100,800)])
+
+    def test_array_prefix_query_failure_preserves_unchecked_range(self):
+        result, _ = self.array_prefix([], 4, 4)
+        self.assertEqual(result['checked_elements'], 0)
+        self.assertFalse(result['coverage_complete'])
+        self.assertEqual(result['ranges'], [{'start':0,'end':4,'status':'unchecked'}])
+
     def test_source_line_beyond_one_mib_with_bounded_window(self):
         source = self.root / 'large.c'
         prefix = '/* ' + 'padding ' * 30 + '*/\n'

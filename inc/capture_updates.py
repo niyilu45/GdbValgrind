@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v29
+// aiv-stack-captures-v30
 (()=>{
  let running=true,timer,activeReplay=null,loadedRevision=null,probeRevision=null;const captures=new Map(),readableIds=new Set(),processed=new Map();
  const status=document.getElementById('capture-status');
@@ -87,10 +87,14 @@ SCRIPT = r'''
  function variableLines(v){
   const info=v.initialization||{},details=v.member_details;
   const lines=[];const indexAbnormal=(v.index_accesses||[]).some(a=>a.bounds&&a.actual_index!==null&&(a.actual_index<a.bounds[0]||a.actual_index>a.bounds[1]));
-  const overall=indexAbnormal?'abnormal':variableState(info.observed_status||info.status,v.status,info.complete);
+  const prefixAbnormal=(v.index_accesses||[]).some(a=>a.prefix_check?.ranges?.some(r=>['undefined','unaddressable','out_of_bounds'].includes(r.status)));
+  const prefixUnknown=(v.index_accesses||[]).some(a=>a.prefix_check&&(!a.prefix_check.coverage_complete||a.prefix_check.ranges?.some(r=>['unknown','unchecked'].includes(r.status))));
+  const valueState=variableState(info.observed_status||info.status,v.status,info.complete);
+  const overall=indexAbnormal||prefixAbnormal||valueState==='abnormal'?'abnormal':prefixUnknown?'uncertain':valueState;
   lines.push({text:'\n'+v.name+(v.type?'（'+v.type+'）':'')+' · '+(v.role==='argument'?'函数参数':v.role==='source_expression'?'本行表达式逐项读取':'局部变量'),state:overall});
   if(v.macro_expansion)lines.push('当前源码位置的宏展开：'+v.macro_expansion);
   for(const [position,raw] of (v.index_accesses||[]).entries()){const access=indexLabel(raw,v.name,v.index_accesses,position);lines.push('下标 '+(access.index_expression||'无法唯一对应（旧现场缺少名称，请重新采集）')+' = '+(access.actual_index??'未知')+'；'+(access.base_expression||'该数组')+' 的下标范围 '+(access.bounds?access.bounds.join('～')+'（元素索引）':'未知（没有可确认的数组边界）'))}
+  for(const access of v.index_accesses||[]){if(access.prefix_check)lines.push({prefix:access.prefix_check,base:access.base_expression||'该数组'})}
   if(v.status&&v.status!=='available'){lines.push({text:'无法读取：'+v.value,state:'uncertain'});return lines}
   lines.push({text:'检查结果：'+(initLabels[info.status]||'未提供初始化检查结果'),state:overall});
   if(info.reason)lines.push('检查范围说明：'+info.reason);
@@ -128,7 +132,7 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v29 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v30 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
    for(const note of [frame.note,...(frame.inspection_errors||[]),!frame.source_line?.text&&frame.source_line?.note].filter(Boolean))add('p','采集说明：'+note).className='meta';
    if(directChecks){const rows=frame.line_checks.items,read=rows.filter(v=>v.status==='available').length,unknown=rows.filter(v=>['unknown','partial_check'].includes(v.initialization?.status||'unknown')).length;
     add('p','读取成功 '+read+' / '+rows.length+' 项；未读到 '+(rows.length-read)+' 项；初始化检查不完整或未知 '+unknown+' 项。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
@@ -194,7 +198,16 @@ SCRIPT = r'''
      let memberCount=0;
      for(const m of members||[]){const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;if(!onLine(name))continue;const state=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);const row=add('span',(relatedCount+1)+'. '+name+(m.type?'（'+m.type+'）':'')+' = '+(m.value??'旧现场未单独保存成员值')+'；'+(initLabels[state]||'初始化状态无法确定'),group);row.style.display='block';colorState(row,variableState(state,details?m.status:undefined,v.initialization?.complete));if(m.note){const note=add('span','说明：'+m.note,group);note.style.display='block'}memberCount++;relatedCount++}
      if(!memberCount){add('span',(relatedCount+1)+'. '+v.name+'：本行出现此对象，但没有可对应的成员值，不展开其他成员。\n',group);relatedCount++}
-    }else{let first=true;for(const row of variableLines(v)){const text=typeof row==='string'?row:row.text;const line=add('span',first?(relatedCount+1)+'. '+text.trimStart():text,group);first=false;line.style.display='block';if(row.state)colorState(line,row.state)}relatedCount++}
+    }else{let first=true;for(const row of variableLines(v)){
+     if(row.prefix){
+      const p=row.prefix,box=add('details','',group);box.dataset.arrayPrefix='yes';
+      add('summary',row.base+'：下标 '+p.requested.join('～')+' 范围检查（已检查 '+p.checked_elements+' 个元素；'+(p.coverage_complete?'范围扫描完成':'存在未检查范围')+'）',box);
+      const labels={defined:'初始化及内存可访问性检查通过',undefined:'存在未初始化字节，值不可靠',unaddressable:'元素存储含不可访问内存',out_of_bounds:'超出数组边界，未读取',unknown:'布局或初始化状态无法确定',unchecked:'未检查，不能判断'};
+      for(const r of p.ranges||[]){const line=add('p',r.start+'～'+r.end+'：'+(labels[r.status]||r.status),box);colorState(line,variableState(r.status))}
+      if(p.reason)add('p',p.reason,box);add('p',p.note,box);continue;
+     }
+     const text=typeof row==='string'?row:row.text;const line=add('span',first?(relatedCount+1)+'. '+text.trimStart():text,group);first=false;line.style.display='block';if(row.state)colorState(line,row.state)
+    }relatedCount++}
    }
    if(!relatedCount)relevant.textContent='未找到可与本行直接对应的已采集变量。宏、多行表达式、全局变量或缺少源码可能导致无法关联。';
    const legend=add('p','');legend.className='meta';

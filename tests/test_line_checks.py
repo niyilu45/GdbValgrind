@@ -28,6 +28,18 @@ class Value:
 
 
 class LineCheckTests(unittest.TestCase):
+    def test_prefix_check_is_attached_even_when_current_index_is_out_of_bounds(self):
+        calls = []
+        expected = {'ranges':[{'start':0,'end':1,'status':'defined'},{'start':2,'end':5,'status':'out_of_bounds'}]}
+        def prefix(base, index, low, high, budget):
+            calls.append((index,low,high))
+            return expected
+        self.scope['check_array_prefix'] = prefix
+        row = self.run_line('return data[5];', {'data':Value([Value(1),Value(2)],code=8)})[0]
+        self.assertEqual(calls, [(5,0,1)])
+        self.assertEqual(row['index_accesses'][0]['prefix_check'], expected)
+        self.assertEqual(row['initialization']['status'], 'out_of_bounds')
+
     def test_for_and_switch_read_values_without_executing_updates(self):
         options=Value(Value({'limit':Value(8),'mode':Value(3)},code=6),code=5)
         values={'i':Value(2),'options':options}

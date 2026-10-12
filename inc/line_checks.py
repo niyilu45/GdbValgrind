@@ -3,6 +3,74 @@
 LINE_CHECK_SCRIPT = r'''
 import ast
 
+def check_array_prefix(base, index, low, high, budget):
+    """Batch validity queries; compress adjacent elements with the same state."""
+    result = {'requested': [0, index], 'bounds': [low, high], 'ranges': [],
+              'checked_elements': 0, 'coverage_complete': False,
+              'note': '检查数组元素自身的存储；通过不代表业务取值合理，也不证明指针指向对象已分配。'}
+    def append(first, last, state):
+        if first > last:
+            return
+        ranges = result['ranges']
+        if ranges and ranges[-1]['status'] == state and ranges[-1]['end'] + 1 == first:
+            ranges[-1]['end'] = last
+        else:
+            ranges.append({'start': first, 'end': last, 'status': state})
+    if index < 0:
+        result['reason'] = '当前下标为负数，不存在从 0 到当前下标的正向检查区间'
+        return result
+    start, end = max(0, low), min(index, high)
+    append(0, min(index, low - 1), 'out_of_bounds')
+    cursor = start
+    try:
+        if start <= end:
+            element = base.type.strip_typedefs().target()
+            stride = int(element.sizeof)
+            if stride <= 0 or stride > 65536:
+                raise ValueError('单个元素大小未知或超过 65536 字节，未检查该范围')
+            offsets, layout_complete = initialization_layout(element, stride)
+            used = sorted(offsets)
+            if base.address is None:
+                raise ValueError('数组没有可取地址的存储，无法查询内存有效性')
+            address = int(base.address)
+            # Separate budget: scanning a prefix must not consume the current
+            # element's normal checks. Shared across all frames in one stop.
+            remaining = budget.setdefault('array_prefix', {'queries': 256, 'bytes': 1048576, 'ranges': 512})
+            while cursor <= end:
+                if remaining['queries'] <= 0 or remaining['bytes'] < stride or remaining['ranges'] <= 0:
+                    raise ValueError('本次现场数组范围检查达到预算（1 MiB、256 次批量查询或 512 段结果），剩余范围未检查')
+                count = min(end - cursor + 1, max(1, 4096 // stride), remaining['bytes'] // stride)
+                length = count * stride
+                remaining['queries'] -= 1
+                remaining['bytes'] -= length
+                bits = parse_vbits(capture_execute('monitor get_vbits 0x%x %d' % (address + (cursor-low)*stride, length)), length)
+                for offset in range(count):
+                    if remaining['ranges'] <= 0:
+                        raise ValueError('结果区间过多，剩余范围未检查')
+                    storage = bits[offset*stride:(offset+1)*stride]
+                    selected = [storage[n] for n in used]
+                    if None in storage:
+                        state = 'unaddressable'
+                    elif any(value != 0 for value in selected):
+                        state = 'undefined'
+                    elif not used or not layout_complete:
+                        state = 'unknown'
+                    else:
+                        state = 'defined'
+                    before = len(result['ranges'])
+                    append(cursor, cursor, state)
+                    remaining['ranges'] -= len(result['ranges']) - before
+                    result['checked_elements'] += 1
+                    cursor += 1
+    except Exception as exc:
+        if disconnected(str(exc)):
+            raise CaptureDisconnected(str(exc))
+        result['reason'] = str(exc)
+    append(cursor, end, 'unchecked')
+    append(max(0, high + 1), index, 'out_of_bounds')
+    result['coverage_complete'] = cursor > end
+    return result
+
 def check_source_expressions(frame, source, budget):
     previous = None
     selected = False
@@ -168,6 +236,7 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                     raise ValueError('动态指针长度未知，未读取该索引元素')
                 low, high = map(int, kind.range())
                 access['bounds'] = [low, high]
+                access['prefix_check'] = check_array_prefix(base, index, low, high, budget)
                 if not low <= index <= high:
                     row['initialization'] = {'status': 'out_of_bounds'}
                     raise ValueError('实际索引 %s，合法范围 %s～%s；未读取越界元素' % (index, low, high))

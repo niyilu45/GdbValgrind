@@ -70,7 +70,7 @@ const nextProbe=document.head.children.at(-1);window.aivCaptureCheck({revision:'
 assert(document.head.children.at(-1).src.startsWith('capture-updates.js'));
 '''
         script = SCRIPT.replace('<script>', '').replace('</script>', '')
-        result = subprocess.run(['node','-e',setup+script+checks], capture_output=True, text=True, encoding='utf-8')
+        result = subprocess.run(['node'], input=setup+script+checks, capture_output=True, text=True, encoding='utf-8')
         self.assertEqual(result.returncode,0,result.stderr)
 
     @unittest.skipUnless(shutil.which('node'), 'requires Node')
@@ -195,6 +195,14 @@ actualLine=lineSummary('use(data[options.index]);', [], [], 'use(data[options.in
 assert(actualLine.includes('下标 options.index = 7；data 的下标范围 未知'));
 assert(!actualLine.includes('第 1 级索引'));
 assert(!actualLine.includes('访问 data[options.index]'));
+actualLine=lineSummary('use(buffer[idx]);',[],[],'use(buffer[idx]);',[{name:'buffer[idx]',status:'available',value:'7',initialization:{status:'defined'},index_accesses:[{expression:'buffer[idx]',base_expression:'buffer',index_expression:'idx',actual_index:20,bounds:[0,99],prefix_check:{requested:[0,20],checked_elements:21,coverage_complete:true,note:'只检查元素自身存储',ranges:[{start:0,end:15,status:'defined'},{start:16,end:18,status:'undefined'},{start:19,end:20,status:'unaddressable'}]}}]}]);
+assert(actualLine.includes('0～15：初始化及内存可访问性检查通过'));
+assert(actualLine.includes('16～18：存在未初始化字节'));
+assert(actualLine.includes('19～20：元素存储含不可访问内存'));
+assert(actualLine.includes('已检查 21 个元素'));
+const descendants=n=>[n,...(n.children||[]).flatMap(descendants)];
+const prefixDetails=descendants(frame.children[0]).find(n=>n.dataset.arrayPrefix==='yes');
+assert(prefixDetails);assert(!prefixDetails.open);
 function legacyIndices(name, accesses){
  const source='consume('+name+');';
  return lineSummary(source,[],[],source,[{name,status:'unavailable',value:'boundary unknown',initialization:{status:'unknown'},index_accesses:accesses}]);
@@ -262,7 +270,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v29'));
+assert(lineText.includes('变量查看器 v30'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.
