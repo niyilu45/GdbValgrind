@@ -133,3 +133,23 @@ class LineCheckTests(unittest.TestCase):
         rows=self.run_line('return MISSING_MACRO;',{})
         self.assertEqual(rows[0]['status'],'unavailable')
         self.assertIn('-g3',rows[0]['value'])
+
+    def test_failed_block_lookup_falls_back_to_same_frame_name(self):
+        def no_block():
+            raise RuntimeError('block unavailable')
+        frame=SimpleNamespace(block=no_block,read_var=lambda name:Value(23))
+        self.scope['gdb'].lookup_symbol=lambda *args:None
+        rows=self.scope['check_source_expressions'](frame,{'identifiers':'return rxvec;'}, {})['items']
+        self.assertEqual(rows[0]['value'],'23')
+
+    def test_symbol_value_failure_uses_same_frame_symbol(self):
+        def fail(frame):
+            raise RuntimeError('not found via Symbol.value')
+        symbol=SimpleNamespace(is_variable=True,value=fail)
+        self.scope['gdb'].lookup_symbol=lambda name,block:(symbol,False)
+        def read(actual):
+            self.assertIs(actual,symbol)
+            return Value(29)
+        frame=SimpleNamespace(block=lambda:object(),read_var=read)
+        rows=self.scope['check_source_expressions'](frame,{'identifiers':'return rxvec;'}, {})['items']
+        self.assertEqual(rows[0]['value'],'29')

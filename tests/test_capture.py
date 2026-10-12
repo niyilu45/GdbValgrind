@@ -69,6 +69,26 @@ class CaptureTests(unittest.TestCase):
         data=json.loads((self.root/'error-0002.json').read_text(encoding='utf-8'))
         self.assertEqual(data['association']['status'],'verified')
 
+    def test_more_than_twenty_stops_with_duplicate_error_count_gaps(self):
+        original=self.execute
+        for n in range(1,41):
+            self.count=n*100
+            self.gdb.execute=lambda command,**kw: ('n_errs_found %d n_errs_shown %d' % (self.count,n)
+                if command=='monitor v.info n_errs_found' else original(command,**kw))
+            self.error='Invalid write of size 4\n at 0x100: bad (demo.c:%d)' % n
+            self.collector.on_stop(None)
+            data=json.loads((self.root/('error-%04d.json'%n)).read_text(encoding='utf-8'))
+            self.assertEqual(data['association']['status'],'verified')
+            self.assertTrue(self.collector.resume_allowed)
+        self.assertEqual(self.collector.sequence,40)
+
+    def test_ambiguous_count_gap_still_not_verified(self):
+        self.count=100
+        self.collector.on_stop(None)
+        data=json.loads((self.root/'error-0001.json').read_text(encoding='utf-8'))
+        self.assertEqual(data['association']['status'],'unverified')
+        self.assertTrue(any('本次现场未关联' in text for text in self.messages))
+
     def test_distinct_instructions_on_same_source_line_are_captured_separately(self):
         self.count=1
         self.collector.on_stop(None)

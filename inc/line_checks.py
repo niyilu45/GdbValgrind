@@ -75,8 +75,15 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
 
         def name_value(name):
             name = aliases.get(name, name)
+            symbol, implicit, lookup_error = None, False, ''
             if hasattr(gdb, 'lookup_symbol'):
-                symbol, implicit = gdb.lookup_symbol(name, frame.block())
+                try:
+                    symbol, implicit = gdb.lookup_symbol(name, frame.block())
+                except Exception as exc:
+                    if disconnected(str(exc)):
+                        raise CaptureDisconnected(str(exc))
+                    lookup_error = str(exc)
+            if implicit or symbol is not None:
                 if implicit:
                     owner = frame.read_var('this')
                     if owner.type.strip_typedefs().code == gdb.TYPE_CODE_PTR:
@@ -85,16 +92,30 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                 if symbol is not None:
                     if not any(getattr(symbol, flag, False) for flag in ('is_variable', 'is_argument', 'is_constant')):
                         raise ValueError('该名称不是变量或枚举常量：' + name)
-                    value = symbol.value(frame)
-                    if getattr(symbol, 'is_constant', False):
-                        constants.append(value)
-                    return value
+                    try:
+                        value = symbol.value(frame)
+                    except Exception as exc:
+                        if disconnected(str(exc)):
+                            raise CaptureDisconnected(str(exc))
+                        # Some GDB/debug-info combinations can read the symbol
+                        # through Frame.read_var even when Symbol.value fails.
+                        try:
+                            value = frame.read_var(symbol)
+                        except Exception as fallback_exc:
+                            if disconnected(str(fallback_exc)):
+                                raise CaptureDisconnected(str(fallback_exc))
+                            lookup_error = str(exc) + '；' + str(fallback_exc)
+                            value = None
+                    if value is not None:
+                        if getattr(symbol, 'is_constant', False):
+                            constants.append(value)
+                        return value
             try:
                 return frame.read_var(name)
             except Exception as exc:
                 if disconnected(str(exc)):
                     raise CaptureDisconnected(str(exc))
-                raise ValueError('当前帧无法解析名称 %s：%s；若它是宏，需要编译时保留宏调试信息（GCC -g3）' % (name, exc))
+                raise ValueError('当前帧无法解析名称 %s：%s%s；若它是宏，需要编译时保留宏调试信息（GCC -g3）；局部变量也可能已优化或不在当前停止位置的作用域内' % (name, exc, ('；符号查找：'+lookup_error) if lookup_error else ''))
 
         def read(node, depth=0):
             operations[0] -= 1

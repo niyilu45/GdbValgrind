@@ -390,6 +390,7 @@ def capture_variables(frame, budget=None):
 class AutoValueCapture:
     def __init__(self):
         self.last_count = 0
+        self.last_shown = 0
         self.sequence = 0
         self.active = False
         self.seen = set()
@@ -415,6 +416,9 @@ class AutoValueCapture:
                 gdb.write('[AiValgrind] ' + self.failure + '\n')
                 return
             count = int(match.group(1))
+            shown_match = re.search(r'n_errs_shown\s+(\d+)', counters)
+            shown = int(shown_match.group(1)) if shown_match else None
+            shown_delta = shown - self.last_shown if shown is not None and self.last_shown is not None else None
             # A breakpoint, step or SIGINT must not relabel an old error as new.
             if count <= self.last_count:
                 return
@@ -426,12 +430,14 @@ class AutoValueCapture:
             identity = capture_identity(message)
             if identity in self.seen:
                 self.last_count = count
+                self.last_shown = shown
                 self.resume_allowed = True
                 return
             snapshot = {'captured_at': datetime.now(timezone.utc).isoformat(),
                         'requested_error_id': _capture_config['requested_error_id'],
                         'matching_note': '这是本次运行的实际错误，不保证与选中的历史 XML 错误相同。',
                         'error_count': count, 'errors_since_previous_capture': count - self.last_count,
+                        'errors_shown_since_previous_stop': shown_delta,
                         'valgrind_error': message, 'memory': memory_facts(message),
                         'backtrace': capture_execute('bt 16'), 'frames': [],
                         'limits': '当前停止线程，最多 16 帧、每帧 128 个变量；单个值最多 4096 字符。变量是当时可观察值，不自动推断数组下标或期望值。'}
@@ -473,10 +479,10 @@ class AutoValueCapture:
             diagnostic_pc = re.search(r'\bat\s+(0x[0-9a-fA-F]+):', message)
             current_pc = snapshot['frames'][0].get('pc') if snapshot['frames'] else None
             verified = bool(diagnostic_pc and current_pc and int(diagnostic_pc.group(1), 16) == int(current_pc, 16)
-                            and snapshot['errors_since_previous_capture'] == 1)
+                            and (snapshot['errors_since_previous_capture'] == 1 or shown_delta == 1))
             snapshot['association'] = {'status': 'verified' if verified else 'unverified',
                 'diagnostic_pc': diagnostic_pc.group(1) if diagnostic_pc else None, 'current_pc': current_pc,
-                'note': '已核对当前 PC 与 Valgrind 主错误栈顶地址及单次错误计数' if verified else
+                'note': '已核对当前 PC 与 Valgrind 主错误栈顶地址，以及单次错误或单次新增错误报告' if verified else
                         '无法确认最近错误与当前停止现场一致；保留原始数据，不自动填入报告堆栈'}
             snapshot['initialization_analysis'] = analyze_initialization_use(snapshot)
             self.sequence += 1
@@ -524,8 +530,11 @@ class AutoValueCapture:
             base.with_suffix('.txt').write_text(readable, encoding='utf-8')
             base.with_suffix('.html').write_text('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AiValgrind 错误现场</title><body><h1>内存错误现场</h1><pre style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6">' + html.escape(readable) + '</pre></body></html>', encoding='utf-8')
             self.last_count = count
+            self.last_shown = shown
             if verified:
                 self.seen.add(identity)
+            else:
+                gdb.write('[AiValgrind] 本次现场未关联：错误计数增加 %s，新增报告 %s，当前 PC %s，诊断 PC %s。原始现场已保存。\n' % (snapshot['errors_since_previous_capture'], shown_delta, current_pc, snapshot['association']['diagnostic_pc']))
             gdb.write('\n[AiValgrind] 已保存现场: ' + str(base.with_suffix('.html')) + '\n')
             gdb.write(snapshot['memory'].get('explanation', '') + '\n')
             gdb.write(snapshot['initialization_analysis']['note'] + '\n')

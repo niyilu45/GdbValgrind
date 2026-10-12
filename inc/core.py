@@ -581,7 +581,7 @@ def _run_debug(error, args, processes):
         vg = processes.launch([shutil.which("valgrind"), "--tool=memcheck", "--leak-check=full",
                                "--show-leak-kinds=all", "--track-origins=yes", "--vgdb=yes",
                                "--vgdb-error=0", "--vgdb-prefix=" + prefix,
-                               "--log-file=" + str(log_path)] + (["--read-var-info=yes"] if auto_values else []) + command,
+                               "--log-file=" + str(log_path)] + (["--read-var-info=yes", "--error-limit=no"] if auto_values else []) + command,
                               cwd=cwd, stdin=target_input, start_new_session=True)
         try:
             commands = debug_commands(frame, vg.pid, prefix, shutil.which("vgdb"), args.project_dir, args.stop_on_error, capture_script, auto_continue=auto_continue)
