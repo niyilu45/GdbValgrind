@@ -234,6 +234,13 @@ assert(actualLine.includes('0～2：目标成员完整位于同一存活分配�
 assert(actualLine.includes('3～26：目标成员越过指针所在分配块边界'));
 assert(actualLine.includes('Valgrind 原始依据：BASE_BLOCK_PROOF'));
 assert(actualLine.includes('Valgrind 原始依据：NEIGHBOR_BLOCK_PROOF'));
+memberEvidence.index_accesses[0].bounds=[0,0];
+memberEvidence.index_accesses[0].base_type='Item [1]';
+Object.assign(memberEvidence.index_accesses[0].prefix_check,{range_basis:'tail_array_probe',declared_bounds:[0,0]});
+actualLine=lineSummary('tail(records[idx].member);',[],[],'tail(records[idx].member);',[memberEvidence]);
+assert(actualLine.includes('声明范围 0～0；实际下标 26，已按 0～26 探测目标成员'));
+assert(actualLine.includes('已检查 27 个元素'));
+assert(actualLine.includes('GDB 类型 Item [1]'));
 const failedMember=prefixRow('retry[idx].member',26,[0,26],[{start:0,end:0,status:'defined'},{start:1,end:1,status:'unknown'},{start:2,end:26,status:'defined'}],26,false);
 Object.assign(failedMember.index_accesses[0].prefix_check,{member_path:'member',attempted_elements:27,failed_elements:1,query_errors:[{start:1,end:1,address:'0x108',bytes:4,reason:'format mismatch',response:'unavailable'}]});
 actualLine=lineSummary('use(retry[idx].member);',[],[],'use(retry[idx].member);',[failedMember]);
@@ -313,7 +320,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v37'));
+assert(lineText.includes('变量查看器 v38'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.

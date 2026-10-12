@@ -238,6 +238,20 @@ class CaptureTests(unittest.TestCase):
         outside = self.scope['check_source_expressions'](variable_frame,{'identifiers':'return st->ru[index].member;'}, {'queries':256,'bytes':32768})['items'][0]
         self.assertIn('越过原分配块',outside['value'])
         self.assertEqual(outside['index_accesses'][0]['prefix_check']['allocation']['status'],'outside_block')
+        owner.children['ru'] = array
+        array_type.pointer = lambda:self.value_type(4,8)
+        for last in (0,-1):
+            array_type.range = lambda last=last:(0,last)
+            tail = self.scope['check_source_expressions'](variable_frame,{'identifiers':'return st->ru[index].member;'}, {'queries':256,'bytes':32768})['items'][0]
+            access = tail['index_accesses'][0]
+            self.assertEqual(access['actual_index'],26)
+            self.assertEqual(access['bounds'],[0,last])
+            self.assertEqual(access['prefix_check']['checked_elements'],27)
+            self.assertEqual(access['prefix_check']['checked_bytes'],108)
+            self.assertEqual(access['prefix_check']['range_basis'],'tail_array_probe')
+            self.assertEqual(tail['initialization']['status'],'out_of_bounds')
+            self.assertEqual(tail['status'],'unavailable')
+        array_type.range = lambda:(0,287)
         data[7*8] = 'ff'
         result = self.scope['check_source_expressions'](frame,{'identifiers':'return arr[26].member;'}, {'queries':256,'bytes':32768})
         self.assertIn({'start':7,'end':7,'status':'undefined'}, result['items'][0]['index_accesses'][0]['prefix_check']['ranges'])

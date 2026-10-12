@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v37
+// aiv-stack-captures-v38
 (()=>{
  let running=true,timer,activeReplay=null,loadedRevision=null,probeRevision=null;const captures=new Map(),readableIds=new Set(),processed=new Map();
  const status=document.getElementById('capture-status');
@@ -135,7 +135,7 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v37 · '+(directChecks?'本行表达式 '+frame.line_checks.items.length+' 个（不是数组元素个数）'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v38 · '+(directChecks?'本行表达式 '+frame.line_checks.items.length+' 个（不是数组元素个数）'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
    for(const note of [frame.note,...(frame.inspection_errors||[]),!frame.source_line?.text&&frame.source_line?.note].filter(Boolean))add('p','采集说明：'+note).className='meta';
    if(directChecks){const rows=frame.line_checks.items,read=rows.filter(v=>v.status==='available').length,unknown=rows.filter(v=>['unknown','partial_check'].includes(v.initialization?.status||'unknown')).length;
     add('p','表达式读取成功 '+read+' / '+rows.length+' 个；未读到 '+(rows.length-read)+' 个；初始化检查不完整或未知 '+unknown+' 个。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'数组成员实际检查数量见下方区间检查。仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
@@ -210,6 +210,7 @@ SCRIPT = r'''
       }
       add('summary',row.base+'：下标 '+p.requested.join('～')+' 范围检查（已检查 '+p.checked_elements+' 个元素；'+(p.coverage_complete?'范围扫描完成':'存在未检查范围')+'）',box);
       if(p.range_basis==='index_probe')add('p','动态指针：0～'+row.index+' 仅为按索引推导的待检查范围，分配长度和合法数组边界未知。',box);
+      if(p.range_basis==='tail_array_probe')add('p','尾部数组探测：声明范围 '+p.declared_bounds.join('～')+'；实际下标 '+row.index+'，已按 0～'+row.index+' 探测目标成员，未将声明长度当作扫描长度。探测不表示下标合法。',box);
       if(p.attempted_elements!==undefined)add('p','尝试检查 '+p.attempted_elements+' 项；成功核对 '+p.checked_elements+' 项；查询失败 '+(p.failed_elements||0)+' 项。',box);
       if(!p.coverage_complete)box.open=true;
       add('p','当前下标 '+row.index+'；应覆盖 0～'+row.index+'。下面每行是一段检查结果，不代表整个检查范围。',box);
@@ -260,6 +261,7 @@ SCRIPT = r'''
     evidenceLines.push(v.name+'（当前表达式自身，不是整个数组区间）：'+(notes.join('；')||'现场未提供逐字节检查依据，不能补推结论。'));
     for(const access of v.index_accesses||[]){
      const p=access.prefix_check,name=(access.base_expression||v.name)+(p?.member_path?'[*].'+p.member_path:'');
+     evidenceLines.push('  下标传递依据：'+access.expression+'；索引表达式 '+(access.index_expression||'未记录')+' = '+access.actual_index+'；声明边界 '+(access.bounds?access.bounds.join('～'):'未知')+'；GDB 类型 '+(access.base_type||'旧现场未记录'));
      if(!p){evidenceLines.push(name+' 数组区间：现场未保存区间检查依据，不能用当前元素的字节数推断整个区间已检查。');continue}
      if(!Array.isArray(p.requested)||p.requested[0]!==0||p.requested[1]!==access.actual_index||(p.bounds&&access.bounds&&JSON.stringify(p.bounds)!==JSON.stringify(access.bounds))){evidenceLines.push(name+' 数组区间：范围记录与当前下标不一致，不采用其检查依据。');continue}
      evidenceLines.push(name+' 数组区间 '+p.requested.join('～')+'：已检查 '+p.checked_elements+' 个元素；'+(p.coverage_complete?'范围扫描完成':'存在未检查范围'));

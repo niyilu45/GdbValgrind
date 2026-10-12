@@ -113,7 +113,7 @@ def check_array_prefix(base, index, low, high, budget, member_path=(), dynamic=F
             result['note'] += (' 仅检查每个元素的 ' + '.'.join(member_path) + ' 成员，其他成员不参与判定。') if member_path else ''
             offsets, layout_complete = initialization_layout(selected_type, width)
             used = sorted(offsets)
-            if dynamic:
+            if dynamic and base.type.strip_typedefs().code == gdb.TYPE_CODE_PTR:
                 pointer_info = check_initialization(base, budget)
                 result['pointer_initialization'] = pointer_info
                 if pointer_info.get('status') != 'defined' or pointer_info.get('complete') is False:
@@ -128,6 +128,10 @@ def check_array_prefix(base, index, low, high, budget, member_path=(), dynamic=F
                 if base.address is None:
                     raise ValueError('数组没有可取地址的存储，无法查询内存有效性')
                 address = int(base.address)
+                if dynamic:
+                    address_max = (1 << (int(base.type.pointer().sizeof)*8)) - 1
+                    if address <= 0 or address+(end-low)*stride+member_offset+width-1 > address_max:
+                        raise ValueError('尾部数组探测地址不可用或溢出，不继续查询')
             cache = budget.setdefault('array_prefix_cache', {})
             cache_key = (address, str(element), stride, low, high, index, tuple(member_path), member_offset, width, dynamic)
             if cache_key in cache:
@@ -384,6 +388,7 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                           'actual_index':index, 'bounds':None}
                 row.setdefault('index_accesses', []).append(access)
                 kind = base.type.strip_typedefs()
+                access['base_type'] = str(kind)
                 path = getattr(node, '_aiv_member_path', ())
                 if kind.code == gdb.TYPE_CODE_PTR:
                     access['prefix_check'] = check_array_prefix(base, index, 0, index, budget, path, dynamic=True)
@@ -397,7 +402,16 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                     raise ValueError('动态指针长度未知，未读取该索引元素')
                 low, high = map(int, kind.range())
                 access['bounds'] = [low, high]
-                access['prefix_check'] = check_array_prefix(base, index, low, high, budget, path) if path else check_array_prefix(base, index, low, high, budget)
+                if low == 0 and high in (-1,0) and index > high:
+                    # Tail storage may be declared as [0]/[1]. Probe the
+                    # requested addresses, but never reinterpret it as legal
+                    # declared indexing or read a value outside that bound.
+                    access['prefix_check'] = check_array_prefix(base,index,0,index,budget,path,dynamic=True)
+                    access['prefix_check']['range_basis'] = 'tail_array_probe'
+                    access['prefix_check']['declared_bounds'] = [low,high]
+                    access['prefix_check']['note'] = '声明仅有 0/1 项，按实际索引探测目标成员；可能为尾部扩展存储，也可能是真实越界。探测不改变声明边界，不能据此认定下标合法。'
+                else:
+                    access['prefix_check'] = check_array_prefix(base, index, low, high, budget, path) if path else check_array_prefix(base, index, low, high, budget)
                 if not low <= index <= high:
                     row['initialization'] = {'status': 'out_of_bounds'}
                     raise ValueError('实际索引 %s，合法范围 %s～%s；未读取越界元素' % (index, low, high))
