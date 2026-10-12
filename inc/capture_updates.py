@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v22
+// aiv-stack-captures-v23
 (()=>{
  let running=true,timer,activeReplay=null;const captures=new Map();
  const status=document.getElementById('capture-status');
@@ -88,7 +88,8 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v22 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'旧现场：没有本行逐项检查记录；以下仅是旧值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v23 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
+   for(const note of [frame.note,...(frame.inspection_errors||[]),!frame.source_line?.text&&frame.source_line?.note].filter(Boolean))add('p','采集说明：'+note).className='meta';
    if(directChecks){const rows=frame.line_checks.items,read=rows.filter(v=>v.status==='available').length,unknown=rows.filter(v=>['unknown','partial_check'].includes(v.initialization?.status||'unknown')).length;
     add('p','读取成功 '+read+' / '+rows.length+' 项；未读到 '+(rows.length-read)+' 项；初始化检查不完整或未知 '+unknown+' 项。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
    if(saved.replacedEmpty)add('p','首次现场没有读到本行变量，现展示后续首次读到值的完整现场；未混合多次停止的变量。').className='meta';
@@ -237,6 +238,11 @@ SCRIPT = r'''
   if(changed&&filter.checked)list();else markNavigation();
   running=data.live;
   status.textContent=(running?'采集中':'采集已结束')+' · 已关联 '+captures.size+' 个错误，其中 '+[...captures.keys()].filter(hasVariables).length+' 个已读出变量；'+unmatched+' 个现场未能唯一匹配（缺少现场数据 '+missing+'，停止位置未核实 '+unverified+'，多个候选 '+ambiguous+'，位置或错误描述不匹配 '+(unmatched-missing-ambiguous-unverified)+'）。原始现场保留在 captures 目录。'+(unverified?' 旧现场或未核实现场不会填入堆栈，请重新执行步骤三。':'');
+  const kinds=new Map();for(const e of report.errors){if(!kinds.has(e.kind))kinds.set(e.kind,{total:0,read:0,empty:0});const group=kinds.get(e.kind);group.total++;if(hasVariables(e.id))group.read++;else if(captures.has(e.id))group.empty++}
+  status.style.whiteSpace='pre-line';
+  for(const [kind,g] of kinds)status.textContent+='\n'+kind+'：已读值 '+g.read+'/'+g.total+'，已关联但无可展示值 '+g.empty+'，尚未关联 '+(g.total-g.read-g.empty)+'。';
+  status.textContent+='\n尚未关联不等于没有变量：可能未重现、停止位置未核实或堆栈/描述不匹配，不能仅凭报告推断原因。';
+  if([...kinds.keys()].some(k=>k.startsWith('Leak_')))status.textContent+='\n泄漏/仍可访问记录保存的是历史分配栈；检测泄漏时该调用可能已经返回，不能把退出现场的变量当成分配时的值。';
  };
  function poll(){
   if(!running)return;

@@ -13,6 +13,41 @@ from inc import cli
 
 
 class CaptureTests(unittest.TestCase):
+    def test_expression_failure_does_not_skip_scope_variables(self):
+        def fail(*args):
+            raise RuntimeError('failed source inspection')
+        self.scope['check_source_expressions'] = fail
+        self.count = 1
+        self.collector.on_stop(None)
+        data = json.loads((self.root/'error-0001.json').read_text(encoding='utf-8'))
+        row = data['frames'][0]
+        self.assertTrue(any(v['status'] == 'available' for v in row['variables']))
+        self.assertIn('failed source inspection', str(row['inspection_errors']))
+
+    def test_post_read_failure_preserves_scope_value(self):
+        def fail(*args):
+            raise RuntimeError('member layout unavailable')
+        self.scope['describe_members'] = fail
+        rows, _ = self.scope['capture_variables'](self.frame)
+        value = next(v for v in rows if v['name'] == 'i')
+        self.assertEqual(value['status'], 'available')
+        self.assertEqual(value['value'], '4')
+        self.assertEqual(value['initialization']['status'], 'unknown')
+
+    def test_runtime_error_categories_use_same_collector(self):
+        messages = ['Invalid read of size 4', 'Invalid write of size 4',
+                    'Conditional jump or move depends on uninitialised value(s)',
+                    'Use of uninitialised value of size 8',
+                    'Invalid free() / delete / delete[] / realloc()',
+                    'Syscall param write(buf) points to uninitialised byte(s)']
+        for number, message in enumerate(messages, 1):
+            self.count = number
+            self.error = message + '\n at 0x100: bad (demo.c:9)'
+            self.collector.on_stop(None)
+            data = json.loads((self.root/('error-%04d.json'%number)).read_text(encoding='utf-8'))
+            self.assertEqual(data['association']['status'], 'verified')
+            self.assertTrue(any(v['status']=='available' for v in data['frames'][0]['variables']))
+
     def test_inline_frame_does_not_collect_enclosing_function_locals(self):
         class Block(list):
             is_global=False
@@ -483,8 +518,8 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(states, {'a': 'defined', 'b': 'undefined', 'item.used': 'defined'})
         self.assertTrue(all(f['severity'] == 'warning' for f in analysis['findings']))
         self.assertIn('item.unused', [f['name'] for f in analysis['findings']])
-        self.assertEqual(read_line(str(source), 100), {})
-        self.assertEqual(read_line(str(self.root / 'missing.c'), 1), {})
+        self.assertIn('note', read_line(str(source), 100))
+        self.assertIn('note', read_line(str(self.root / 'missing.c'), 1))
         frame['source_line']['identifiers'] = 'printf("b");'
         source.write_text('printf("b"); /* a */', encoding='utf-8')
         frame['source_line'] = read_line(str(source), 1)

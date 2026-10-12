@@ -234,7 +234,10 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
         except Exception as exc:
             if disconnected(str(exc)):
                 raise CaptureDisconnected(str(exc))
-            row['value'] = ('表达式含暂不支持的 C/C++ 语法，未执行；' if isinstance(exc, SyntaxError) else '') + str(exc)
+            if row['status'] == 'available':
+                row['initialization'] = {'status': 'unknown', 'reason': '值已读取，但后续检查失败：' + str(exc)}
+            else:
+                row['value'] = ('表达式含暂不支持的 C/C++ 语法，未执行；' if isinstance(exc, SyntaxError) else '') + str(exc)
         results.append(row)
     coverage = {'recognized':len(expressions), 'attempted':len(results),
                 'read':sum(r['status']=='available' for r in results),

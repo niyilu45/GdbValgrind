@@ -49,6 +49,7 @@ const other={...snapshot,valgrind_error:'Invalid read of size 4'};
 window.aivCaptureUpdate({live:false,items:[{id:'other',snapshot:other}]});
 assert.strictEqual(frame.children.length,1);
 assert(status.textContent.includes('1 个现场未能唯一匹配'));
+assert(status.textContent.includes('InvalidWrite：已读值 1/1'));
 frame.ontoggle();assert.strictEqual(frame.children[0],source);assert.strictEqual(frame.lastElementChild,panel);
 frame.open=false;frame.ontoggle();frame.open=true;frame.ontoggle();
 assert.strictEqual(frame.children.length,2);assert.strictEqual(frame.lastElementChild,panel);assert(all.open);
@@ -200,7 +201,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v22'));
+assert(lineText.includes('变量查看器 v23'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.
@@ -222,6 +223,18 @@ assert(frame.textContent.includes('未混合多次停止'));
 report.errors.reverse();
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-again',items:[{snapshot:struct}]});
+// Runtime categories are matched by diagnostic + stack, not a type allowlist.
+const target=report.errors[1],savedKind=target.kind,savedWhat=target.what;
+for(const [kind,what] of [['UninitCondition','Conditional jump or move depends on uninitialised value(s)'],['UninitValue','Use of uninitialised value of size 8'],['InvalidFree','Invalid free() / delete / delete[] / realloc()'],['SyscallParam','Syscall param write(buf) points to uninitialised byte(s)']]){
+ target.kind=kind;target.what=what;const sample=runtime('bad.c');sample.valgrind_error=what;
+ window.aivCaptureUpdate({live:false,replay_id:kind,items:[{id:kind,snapshot:sample}]});
+ assert(nodes['capture-status'].textContent.includes(kind+'：已读值 1/1'));
+}
+target.kind=savedKind;target.what=savedWhat;
+report.errors.push({id:'leak',kind:'Leak_DefinitelyLost',what:'leak',stacks:[]});
+window.aivCaptureUpdate({live:false,replay_id:'restore-after-categories',items:[{snapshot:struct}]});
+assert(nodes['capture-status'].textContent.includes('Leak_DefinitelyLost：已读值 0/1'));
+assert(nodes['capture-status'].textContent.includes('历史分配栈'));report.errors.pop();
 // Changed source text disables line-level claims instead of guessing.
 report.errors[1].stacks[0].frames[1].source=[{number:10,text:'different_statement();'}];
 frame.children=[];detail(report.errors[1]);

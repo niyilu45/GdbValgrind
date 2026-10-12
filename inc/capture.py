@@ -212,14 +212,14 @@ def capture_source_line(filename, line):
             text = source.read(1024 * 1024)
         lines = text.splitlines()
         if not 0 < line <= len(lines) or (len(text) == 1024 * 1024 and line == len(lines)):
-            return {}
+            return {'note': '无法读取报错行：行号超出源码范围或超过 1 MiB 读取上限'}
         # Preserve line numbers while excluding comments and quoted literals.
         clean = re.sub(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'',
                        lambda m: '\n' * m.group().count('\n') or ' ', text, flags=re.S)
         return {'text': lines[line - 1][:4096], 'identifiers': clean.split('\n')[line - 1][:4096],
                 'note': '源码文本关联，不代表该表达式已执行；宏、多行表达式和指针成员可能无法关联'}
-    except (OSError, ValueError, IndexError):
-        return {}
+    except (OSError, ValueError, IndexError) as exc:
+        return {'note': '无法读取现场源码：' + str(exc)}
 
 def line_variable_states(frame):
     source = frame.get('source_line', {}).get('identifiers', '')
@@ -379,7 +379,10 @@ def capture_variables(frame, budget=None):
                 except Exception as exc:
                     if disconnected(str(exc)):
                         raise CaptureDisconnected(str(exc))
-                    row.update(status='unavailable', value=str(exc))
+                    if row.get('status') == 'available':
+                        row['initialization'] = {'status': 'unknown', 'reason': '值已读取，但后续检查失败：' + str(exc)}
+                    else:
+                        row.update(status='unavailable', value=str(exc))
                 row.setdefault('initialization', {'status': 'unknown', 'reason': row.get('value', '无法读取变量')})
                 result.append(row)
                 if len(result) >= 128:
@@ -472,13 +475,28 @@ class AutoValueCapture:
                     row['file'] = sal.symtab.fullname() if sal.symtab else ''
                     row['line'] = sal.line
                     row['source_line'] = capture_source_line(row['file'], sal.line)
-                    row['line_checks'] = check_source_expressions(frame, row['source_line'], initialization_budget)
-                    row['variables'], row['note'] = capture_variables(frame, initialization_budget)
-                    row['index_analysis'] = nested_index_analysis(frame, row['source_line'])
                 except Exception as exc:
                     if disconnected(str(exc)):
                         raise CaptureDisconnected(str(exc))
                     row['note'] = str(exc)
+                # One failed inspection must not suppress other independent
+                # reads in this frame. Transport loss still aborts immediately.
+                row.setdefault('source_line', {})
+                row['inspection_errors'] = []
+                for stage in ('line_checks', 'variables', 'index_analysis'):
+                    try:
+                        if stage == 'line_checks':
+                            row[stage] = check_source_expressions(frame, row['source_line'], initialization_budget)
+                        elif stage == 'variables':
+                            row[stage], note = capture_variables(frame, initialization_budget)
+                            if note:
+                                row['inspection_errors'].append('作用域变量：' + note)
+                        else:
+                            row[stage] = nested_index_analysis(frame, row['source_line'])
+                    except Exception as exc:
+                        if disconnected(str(exc)):
+                            raise CaptureDisconnected(str(exc))
+                        row['inspection_errors'].append(stage + ': ' + str(exc))
                 snapshot['frames'].append(row)
                 try:
                     frame = frame.older()
@@ -532,7 +550,7 @@ class AutoValueCapture:
             lines.extend(line_details)
             for row in snapshot['frames']:
                 lines.append('\n#%s %s %s:%s' % (row['index'], row.get('function', ''), row.get('file', ''), row.get('line', '')))
-                if row.get('source_line'):
+                if row.get('source_line', {}).get('text'):
                     lines.append('  源码：' + row['source_line']['text'])
                 for checked in row.get('line_checks', {}).get('items', []):
                     lines.append('  本行逐项检查 %s = %s [%s]；%s' % (checked['name'], checked['value'], checked['status'], initialization_summary(checked['initialization'])))
@@ -543,6 +561,7 @@ class AutoValueCapture:
                     lines.append('    初始化状态：' + initialization_summary(variable['initialization']))
                 if row.get('note'):
                     lines.append('  ' + row['note'])
+                lines.extend('  检查说明：' + note for note in row.get('inspection_errors', []))
             lines.append('\n' + snapshot['limits'])
             lines.append(snapshot['initialization_analysis']['limits'])
             readable = '\n'.join(lines)

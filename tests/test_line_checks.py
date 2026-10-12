@@ -28,6 +28,16 @@ class Value:
 
 
 class LineCheckTests(unittest.TestCase):
+    def test_post_read_check_failure_keeps_actual_value(self):
+        def fail(*args):
+            raise RuntimeError('initialization query failed')
+        self.scope['check_initialization'] = fail
+        row = self.run_line('return value;', {'value':Value(42)})[0]
+        self.assertEqual(row['status'], 'available')
+        self.assertEqual(row['value'], '42')
+        self.assertEqual(row['initialization']['status'], 'unknown')
+        self.assertIn('initialization query failed', row['initialization']['reason'])
+
     def test_struct_reference_index_and_reported_ranges(self):
         self.scope['gdb'].TYPE_CODE_REF=9
         reference=Value(None,code=9)
