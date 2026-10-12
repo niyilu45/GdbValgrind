@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v36
+// aiv-stack-captures-v37
 (()=>{
  let running=true,timer,activeReplay=null,loadedRevision=null,probeRevision=null;const captures=new Map(),readableIds=new Set(),processed=new Map();
  const status=document.getElementById('capture-status');
@@ -87,8 +87,8 @@ SCRIPT = r'''
  function variableLines(v){
   const info=v.initialization||{},details=v.member_details;
   const lines=[];const indexAbnormal=(v.index_accesses||[]).some(a=>a.bounds&&a.actual_index!==null&&(a.actual_index<a.bounds[0]||a.actual_index>a.bounds[1]));
-  const prefixAbnormal=(v.index_accesses||[]).some(a=>a.prefix_check?.ranges?.some(r=>['undefined','unaddressable','out_of_bounds'].includes(r.status)));
-  const prefixUnknown=(v.index_accesses||[]).some(a=>a.prefix_check&&(!a.prefix_check.coverage_complete||a.prefix_check.ranges?.some(r=>['unknown','unchecked'].includes(r.status))));
+  const prefixAbnormal=(v.index_accesses||[]).some(a=>a.prefix_check?.ranges?.some(r=>['undefined','unaddressable','out_of_bounds'].includes(r.status))||['outside_block','freed','target_freed'].includes(a.prefix_check?.allocation?.status));
+  const prefixUnknown=(v.index_accesses||[]).some(a=>a.prefix_check&&(!a.prefix_check.coverage_complete||a.prefix_check.ranges?.some(r=>['unknown','unchecked'].includes(r.status))||(a.prefix_check.range_basis==='index_probe'&&(!a.prefix_check.allocation||a.prefix_check.allocation.status==='unknown'))));
   const valueState=variableState(info.observed_status||info.status,v.status,info.complete);
   const overall=indexAbnormal||prefixAbnormal||valueState==='abnormal'?'abnormal':prefixUnknown?'uncertain':valueState;
   lines.push({text:'\n'+v.name+(v.type?'（'+v.type+'）':'')+' · '+(v.role==='argument'?'函数参数':v.role==='source_expression'?'本行表达式逐项读取':'局部变量'),state:overall});
@@ -135,7 +135,7 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v36 · '+(directChecks?'本行表达式 '+frame.line_checks.items.length+' 个（不是数组元素个数）'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v37 · '+(directChecks?'本行表达式 '+frame.line_checks.items.length+' 个（不是数组元素个数）'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
    for(const note of [frame.note,...(frame.inspection_errors||[]),!frame.source_line?.text&&frame.source_line?.note].filter(Boolean))add('p','采集说明：'+note).className='meta';
    if(directChecks){const rows=frame.line_checks.items,read=rows.filter(v=>v.status==='available').length,unknown=rows.filter(v=>['unknown','partial_check'].includes(v.initialization?.status||'unknown')).length;
     add('p','表达式读取成功 '+read+' / '+rows.length+' 个；未读到 '+(rows.length-read)+' 个；初始化检查不完整或未知 '+unknown+' 个。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'数组成员实际检查数量见下方区间检查。仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
@@ -215,6 +215,13 @@ SCRIPT = r'''
       add('p','当前下标 '+row.index+'；应覆盖 0～'+row.index+'。下面每行是一段检查结果，不代表整个检查范围。',box);
       const labels={defined:'初始化及内存可访问性检查通过',undefined:'存在未初始化字节，值不可靠',unaddressable:'元素存储含不可访问内存',out_of_bounds:'超出数组边界，未读取',unknown:'布局或初始化状态无法确定',unchecked:'未检查，不能判断'};
       for(const r of p.ranges||[]){const line=add('p',r.start+'～'+r.end+'：'+(labels[r.status]||r.status),box);colorState(line,variableState(r.status))}
+      if(p.allocation){
+       const a=p.allocation,labels={same_block:'目标成员完整位于同一存活分配块内',outside_block:'目标成员越过指针所在分配块边界',freed:'指针所在内存块已释放',target_freed:'当前目标成员涉及已释放内存',unknown:'分配归属无法确定'};
+       add('h4','分配块归属（与初始化状态分别判断）',box);
+       add('p','当前索引：'+(labels[a.status]||labels.unknown),box);
+       for(const r of a.ranges||[]){const line=add('p',r.start+'～'+r.end+'：'+(labels[r.status]||labels.unknown),box);colorState(line,r.status==='same_block'?'normal':r.status==='unknown'?'uncertain':'abnormal')}
+       if(a.reason)add('p',a.reason,box);add('p',a.note,box);
+      }else if(p.range_basis==='index_probe')add('p','旧现场未保存分配块归属检查，需重新执行步骤三；可访问不代表属于同一分配块。',box);
       if(p.reason)add('p',p.reason,box);add('p',p.note,box);continue;
      }
      const text=typeof row==='string'?row:row.text;const line=add('span',first?(relatedCount+1)+'. '+text.trimStart():text,group);first=false;line.style.display='block';if(row.state)colorState(line,row.state)
@@ -264,6 +271,12 @@ SCRIPT = r'''
      }else evidenceLines.push('  旧现场未保存区间字节数及地址依据；需要重新执行步骤三补齐，不从当前元素的检查信息推算。');
      if(p.reason)evidenceLines.push('  未完成原因：'+p.reason);
      for(const failure of p.query_errors||[])evidenceLines.push('  查询失败区间 '+failure.start+'～'+failure.end+'，地址 '+failure.address+'，长度 '+failure.bytes+' 字节：'+failure.reason+'；原始返回：'+(failure.response||'无返回内容'));
+     if(p.allocation){
+      for(const [label,block] of [['指针起始地址',p.allocation.base],['当前目标首地址',p.allocation.target],['当前目标末地址',p.allocation.target_end]]){
+       if(!block)continue;
+       evidenceLines.push('  '+label+' '+block.address+'：'+(block.start_address?'分配块 '+block.start_address+'～'+block.end_address+'，'+block.size+' 字节；':'')+(block.reason||'')+'\n    Valgrind 原始依据：'+(block.evidence||'未取得'));
+      }
+     }
     }
    }
    proof.textContent=evidenceLines.join('\n');

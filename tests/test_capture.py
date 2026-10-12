@@ -13,6 +13,46 @@ from inc import cli
 
 
 class CaptureTests(unittest.TestCase):
+    def test_allocation_ownership_does_not_accept_neighboring_live_block(self):
+        answers = {0x108:"Address 0x108 is 8 bytes inside a block of size 32 alloc'd",
+                   0x124:"Address 0x124 is 4 bytes inside a block of size 8 alloc'd",
+                   0x127:"Address 0x127 is 7 bytes inside a block of size 8 alloc'd"}
+        calls = []
+        def execute(command, **kwargs):
+            calls.append(command)
+            return answers.get(int(command.split()[-1],16),'unknown command')
+        self.gdb.execute = execute
+        budget = {}
+        result = self.scope['check_allocation_range'](0x108,8,4,4,3,budget)
+        self.assertEqual(result['status'],'outside_block')
+        self.assertEqual(result['ranges'],[{'start':0,'end':2,'status':'same_block'},
+                                          {'start':3,'end':3,'status':'outside_block'}])
+        self.assertEqual(result['target']['status'],'allocated')
+        self.scope['check_allocation_range'](0x108,8,4,4,3,budget)
+        self.assertEqual(len(calls),3)
+
+    def test_allocation_requires_exact_containing_block_and_detects_freed(self):
+        lookup = self.scope['allocation_location']
+        for answer in ("Address 0x100 is 0 bytes after a block of size 32 alloc'd",
+                       "Address 0x200 is 0 bytes inside a block of size 32 alloc'd",
+                       'Address 0x100 is on thread 1 stack', 'unknown monitor command'):
+            self.gdb.execute = lambda *args, answer=answer, **kwargs:answer
+            self.assertEqual(lookup(0x100,{})['status'],'unknown')
+        self.gdb.execute = lambda *args, **kwargs:"Address 0x100 is 0 bytes inside a block of size 32 free'd"
+        result = self.scope['check_allocation_range'](0x100,8,0,4,3,{})
+        self.assertEqual(result['status'],'freed')
+        self.assertEqual(result['ranges'],[{'start':0,'end':3,'status':'freed'}])
+
+    def test_allocation_member_full_width_and_same_live_block(self):
+        def execute(command, **kwargs):
+            address = int(command.split()[-1],16)
+            start = 0x100 if address < 0x120 else 0x120
+            return "Address %s is %d bytes inside a block of size 32 alloc'd" % (hex(address),address-start)
+        self.gdb.execute = execute
+        check = self.scope['check_allocation_range']
+        self.assertEqual(check(0x100,8,4,4,3,{})['status'],'same_block')
+        self.assertEqual(check(0x100,8,4,8,3,{})['status'],'outside_block')
+
     def array_prefix(self, raw, index, high, element=None, budget=None, member_path=()):
         element = element or self.value_type()
         array = SimpleNamespace(address=0x100, type=self.value_type(6, (high+1)*element.sizeof, target=lambda: element))
@@ -188,6 +228,16 @@ class CaptureTests(unittest.TestCase):
         self.assertIn('不读取其值',bad['value'])
         self.assertEqual(bad['index_accesses'][0]['prefix_check']['ranges'][-1], {'start':26,'end':26,'status':'unaddressable'})
         data[26*8:26*8+4] = ['00']*4
+        def allocation_execute(command, **kwargs):
+            if command.startswith('monitor v.info location '):
+                address = int(command.split()[-1],16)
+                start = 0x100 if address == 0x100 else 0x1d0
+                return "Address %s is %d bytes inside a block of size 8 alloc'd" % (hex(address),address-start)
+            return execute(command,**kwargs)
+        self.gdb.execute = allocation_execute
+        outside = self.scope['check_source_expressions'](variable_frame,{'identifiers':'return st->ru[index].member;'}, {'queries':256,'bytes':32768})['items'][0]
+        self.assertIn('越过原分配块',outside['value'])
+        self.assertEqual(outside['index_accesses'][0]['prefix_check']['allocation']['status'],'outside_block')
         data[7*8] = 'ff'
         result = self.scope['check_source_expressions'](frame,{'identifiers':'return arr[26].member;'}, {'queries':256,'bytes':32768})
         self.assertIn({'start':7,'end':7,'status':'undefined'}, result['items'][0]['index_accesses'][0]['prefix_check']['ranges'])

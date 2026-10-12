@@ -4,6 +4,66 @@ LINE_CHECK_SCRIPT = r'''
 import ast
 from copy import deepcopy
 
+def allocation_location(address, budget):
+    cache = budget.setdefault('allocation_locations', {})
+    if address in cache:
+        return cache[address]
+    result = {'address':hex(address), 'status':'unknown'}
+    if len(cache) >= 32:
+        result['reason'] = '本次现场分配信息查询达到 32 个地址上限'
+        return result
+    try:
+        output = capture_execute('monitor v.info location ' + hex(address))
+        result['evidence'] = output[:2048]
+        # A nearby block or another address's description is not ownership.
+        pattern = r'Address\s+(0x[0-9a-f]+)\s+is\s+([\d,]+) bytes inside a block of size ([\d,]+)\s+(alloc\S*|free\S*)'
+        matches = []
+        for match in re.finditer(pattern, output, re.I):
+            actual, offset, size, state = match.groups()
+            offset, size = int(offset.replace(',', '')), int(size.replace(',', ''))
+            if int(actual,16) == address and 0 <= offset < size and offset <= address:
+                matches.append((address-offset,size,'freed' if state.lower().startswith('free') else 'allocated'))
+        if matches and len(set(matches)) == 1:
+            start,size,state = matches[0]
+            result.update(status=state,start=start,size=size,end=start+size,
+                          start_address=hex(start),end_address=hex(start+size-1))
+        else:
+            result['reason'] = '未取得该地址所在分配块的明确描述（可能为栈/全局内存、附近块描述或命令不支持）'
+    except Exception as exc:
+        if disconnected(str(exc)):
+            raise CaptureDisconnected(str(exc))
+        result['reason'] = str(exc)
+    cache[address] = result
+    return result
+
+def check_allocation_range(address, stride, offset, width, index, budget):
+    base = allocation_location(address,budget)
+    target_address = address+index*stride+offset
+    target = allocation_location(target_address,budget)
+    tail = allocation_location(target_address+width-1,budget)
+    result = {'base':base,'target':target,'target_end':tail,'status':'unknown','ranges':[],
+              'note':'只判断目标成员与指针当前所在分配块的关系；不证明业务下标有效，也无法识别同址重新分配之前的悬空指针。'}
+    if base['status'] == 'freed':
+        result.update(status='freed',ranges=[{'start':0,'end':index,'status':'freed'}])
+    elif base['status'] == 'allocated':
+        last = min(index,(base['end']-address-offset-width)//stride)
+        if last >= 0:
+            result['ranges'].append({'start':0,'end':last,'status':'same_block'})
+        if last < index:
+            result['ranges'].append({'start':max(0,last+1),'end':index,'status':'outside_block'})
+        result['status'] = 'same_block' if last == index else 'outside_block'
+        if result['status'] == 'same_block' and any(
+                item['status'] != 'unknown' and (item['status'] != 'allocated' or
+                (item['start'],item['size']) != (base['start'],base['size'])) for item in (target,tail)):
+            result.update(status='unknown',ranges=[],reason='分配块描述相互矛盾，不推断归属')
+        if result['status'] == 'outside_block' and target['status'] == 'allocated':
+            result['reason'] = '目标地址虽然属于存活分配块，但已经越过指针原来所在块的边界'
+    elif target['status'] == 'freed' or tail['status'] == 'freed':
+        result['status'] = 'target_freed'
+    if not result['ranges']:
+        result['ranges'] = [{'start':0,'end':index,'status':'unknown'}]
+    return result
+
 def check_array_prefix(base, index, low, high, budget, member_path=(), dynamic=False):
     """Batch validity queries; compress adjacent elements with the same state."""
     result = {'requested': [0, index], 'bounds': None if dynamic else [low, high], 'ranges': [],
@@ -74,6 +134,8 @@ def check_array_prefix(base, index, low, high, budget, member_path=(), dynamic=F
                 cached = deepcopy(cache[cache_key])
                 cached['reused'] = True
                 return cached
+            if dynamic:
+                result['allocation'] = check_allocation_range(address,stride,member_offset,width,index,budget)
             result.update(element_bytes=width, element_stride=stride, target_bytes=(end-start+1)*width,
                           start_address='0x%x' % (address+(start-low)*stride+member_offset))
             # Separate budget: scanning a prefix must not consume the current
@@ -325,6 +387,8 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                 path = getattr(node, '_aiv_member_path', ())
                 if kind.code == gdb.TYPE_CODE_PTR:
                     access['prefix_check'] = check_array_prefix(base, index, 0, index, budget, path, dynamic=True)
+                    if access['prefix_check'].get('allocation', {}).get('status') in ('outside_block','freed','target_freed'):
+                        raise ValueError('目标成员已越过原分配块或位于已释放内存；仅保留检查结果，不读取其值')
                     current = next((r['status'] for r in access['prefix_check']['ranges'] if r['start'] <= index <= r['end']), 'unchecked')
                     if current not in ('defined', 'undefined'):
                         raise ValueError('动态指针分配长度未知，当前目标成员未确认可访问；仅保留区间探测结果，不读取其值')

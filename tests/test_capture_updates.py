@@ -228,6 +228,12 @@ Object.assign(memberEvidence.index_accesses[0].prefix_check,{bounds:null,range_b
 actualLine=lineSummary('consume(records[idx].member);',[],[],'consume(records[idx].member);',[memberEvidence]);
 assert(actualLine.includes('仅为按索引推导的待检查范围，分配长度和合法数组边界未知'));
 assert(actualLine.includes('未确认分配长度；可访问不等于未越过原对象边界'));
+Object.assign(memberEvidence.index_accesses[0].prefix_check,{allocation:{status:'outside_block',ranges:[{start:0,end:2,status:'same_block'},{start:3,end:26,status:'outside_block'}],base:{address:'0x100',status:'allocated',start_address:'0x100',end_address:'0x12f',size:48,evidence:'BASE_BLOCK_PROOF'},target:{address:'0x2a4',status:'allocated',evidence:'NEIGHBOR_BLOCK_PROOF'},note:'allocation note'}});
+actualLine=lineSummary('inspect(records[idx].member);',[],[],'inspect(records[idx].member);',[memberEvidence]);
+assert(actualLine.includes('0～2：目标成员完整位于同一存活分配块内'));
+assert(actualLine.includes('3～26：目标成员越过指针所在分配块边界'));
+assert(actualLine.includes('Valgrind 原始依据：BASE_BLOCK_PROOF'));
+assert(actualLine.includes('Valgrind 原始依据：NEIGHBOR_BLOCK_PROOF'));
 const failedMember=prefixRow('retry[idx].member',26,[0,26],[{start:0,end:0,status:'defined'},{start:1,end:1,status:'unknown'},{start:2,end:26,status:'defined'}],26,false);
 Object.assign(failedMember.index_accesses[0].prefix_check,{member_path:'member',attempted_elements:27,failed_elements:1,query_errors:[{start:1,end:1,address:'0x108',bytes:4,reason:'format mismatch',response:'unavailable'}]});
 actualLine=lineSummary('use(retry[idx].member);',[],[],'use(retry[idx].member);',[failedMember]);
@@ -307,7 +313,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v36'));
+assert(lineText.includes('变量查看器 v37'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.
