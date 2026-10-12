@@ -402,6 +402,7 @@ class AutoValueCapture:
         self.sequence = 0
         self.active = False
         self.seen = set()
+        self.empty_attempts = {}
         self.resume_allowed = False
         self.failure = ''
         self.stop_reason = ''
@@ -496,6 +497,14 @@ class AutoValueCapture:
                         '无法确认最近错误与当前停止现场一致；保留原始数据，不自动填入报告堆栈'}
             snapshot['initialization_analysis'] = analyze_initialization_use(snapshot)
             self.sequence += 1
+            snapshot['capture_sequence'] = self.sequence
+            line_frames = [f for f in snapshot['frames'] if f.get('line_checks', {}).get('items')]
+            relevant_values = line_frames[0]['line_checks']['items'] if line_frames else [v for f in snapshot['frames'] for v in f.get('variables', [])]
+            readable = any(v.get('status') == 'available' for v in relevant_values)
+            if verified and not readable:
+                self.empty_attempts[identity] = self.empty_attempts.get(identity, 0) + 1
+            snapshot['empty_capture_attempt'] = self.empty_attempts.get(identity, 0)
+            snapshot['retry_on_repeat'] = bool(verified and not readable and snapshot['empty_capture_attempt'] < 3)
             folder = Path(_capture_config['directory'])
             base = folder / ('error-%04d' % self.sequence)
             manifest = folder / '.aivalgrind-files.json'
@@ -541,10 +550,12 @@ class AutoValueCapture:
             base.with_suffix('.html').write_text('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AiValgrind 错误现场</title><body><h1>内存错误现场</h1><pre style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6">' + html.escape(readable) + '</pre></body></html>', encoding='utf-8')
             self.last_count = count
             self.last_shown = shown
-            if verified:
+            if verified and not snapshot['retry_on_repeat']:
                 self.seen.add(identity)
-            else:
+            elif not verified:
                 gdb.write('[AiValgrind] 本次现场未关联：错误计数增加 %s，新增报告 %s，当前 PC %s，诊断 PC %s。原始现场已保存。\n' % (snapshot['errors_since_previous_capture'], shown_delta, current_pc, snapshot['association']['diagnostic_pc']))
+            if snapshot['retry_on_repeat']:
+                gdb.write('[AiValgrind] 本行未读到变量值；同一错误再次出现时重试，最多保留 3 次失败尝试。\n')
             gdb.write('\n[AiValgrind] 已保存现场: ' + str(base.with_suffix('.html')) + '\n')
             gdb.write(snapshot['memory'].get('explanation', '') + '\n')
             gdb.write(snapshot['initialization_analysis']['note'] + '\n')

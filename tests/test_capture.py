@@ -318,6 +318,34 @@ class CaptureTests(unittest.TestCase):
         self.collector.on_stop(None)
         self.assertEqual(sum('get_vbits' in c for c in calls), 1)
 
+    def test_empty_line_capture_retries_until_readable(self):
+        checks = {'version': 1, 'items': [{'name': 'i', 'value': 'unavailable', 'status': 'unavailable', 'initialization': {'status': 'unknown'}}]}
+        self.scope['check_source_expressions'] = lambda *args: checks
+        self.count = 1
+        self.collector.on_stop(None)
+        first = json.loads((self.root / 'error-0001.json').read_text(encoding='utf-8'))
+        self.assertTrue(first['retry_on_repeat'])
+        self.assertFalse(self.collector.seen)
+        checks['items'][0]['status'] = 'available'
+        self.count = 2
+        self.collector.on_stop(None)
+        second = json.loads((self.root / 'error-0002.json').read_text(encoding='utf-8'))
+        self.assertFalse(second['retry_on_repeat'])
+        self.assertTrue(self.collector.seen)
+        self.count = 3
+        self.collector.on_stop(None)
+        self.assertEqual(len(list(self.root.glob('error-*.json'))), 2)
+
+    def test_empty_line_capture_retries_are_bounded(self):
+        self.scope['check_source_expressions'] = lambda *args: {'version': 1, 'items': [{'name': 'i', 'value': 'unavailable', 'status': 'unavailable', 'initialization': {'status': 'unknown'}}]}
+        for count in range(1, 6):
+            self.count = count
+            self.collector.on_stop(None)
+        self.assertEqual(len(list(self.root.glob('error-*.json'))), 3)
+        last = json.loads((self.root / 'error-0003.json').read_text(encoding='utf-8'))
+        self.assertEqual(last['empty_capture_attempt'], 3)
+        self.assertFalse(last['retry_on_repeat'])
+
     def test_unreadable_error_does_not_mark_seen(self):
         self.count = 1
         self.error = '[unavailable: unsupported]'

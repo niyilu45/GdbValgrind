@@ -30,6 +30,7 @@ class StoreTests(unittest.TestCase):
             for item in reference['errors']:
                 item.pop('unique_ids')
             self.assertEqual(rows,reference['errors'])
+            self.assertEqual([item['kind'] for item in rows], ['InvalidWrite', 'InvalidRead'])
             self.assertEqual(rows[0]['records'], 2)
             self.assertEqual(rows[0]['stacks'][0]['frames'][0]['ip'], '0x111')
             self.assertTrue(store.summary(stream.complete)['counts_complete'])

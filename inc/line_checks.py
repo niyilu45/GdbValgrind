@@ -236,7 +236,11 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                 raise CaptureDisconnected(str(exc))
             row['value'] = ('表达式含暂不支持的 C/C++ 语法，未执行；' if isinstance(exc, SyntaxError) else '') + str(exc)
         results.append(row)
-    return {'version': 1, 'items': results, 'truncated': len(expressions) > 32,
+    coverage = {'recognized':len(expressions), 'attempted':len(results),
+                'read':sum(r['status']=='available' for r in results),
+                'unread':sum(r['status']!='available' for r in results),
+                'initialization_unknown':sum(r['initialization'].get('status') in ('unknown','partial_check') for r in results)}
+    return {'version': 1, 'items': results, 'coverage':coverage, 'truncated': len(expressions) > 32,
             'note': '逐项读取当前帧的源码表达式；不执行目标函数。初始化检查不等于业务取值检查，也不能单独证明本次错误原因。'}
 '''
 from .map_checks import MAP_CHECK_SCRIPT

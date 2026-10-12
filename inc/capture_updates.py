@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v21
+// aiv-stack-captures-v22
 (()=>{
  let running=true,timer,activeReplay=null;const captures=new Map();
  const status=document.getElementById('capture-status');
@@ -88,7 +88,10 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v21 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'旧现场：没有本行逐项检查记录；以下仅是旧值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v22 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'旧现场：没有本行逐项检查记录；以下仅是旧值的源码匹配，不代表已逐项检查')).className='meta';
+   if(directChecks){const rows=frame.line_checks.items,read=rows.filter(v=>v.status==='available').length,unknown=rows.filter(v=>['unknown','partial_check'].includes(v.initialization?.status||'unknown')).length;
+    add('p','读取成功 '+read+' / '+rows.length+' 项；未读到 '+(rows.length-read)+' 项；初始化检查不完整或未知 '+unknown+' 项。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
+   if(saved.replacedEmpty)add('p','首次现场没有读到本行变量，现展示后续首次读到值的完整现场；未混合多次停止的变量。').className='meta';
    if(['InvalidRead','InvalidWrite'].includes(e.kind))colorState(add('p','Valgrind 已确认本次'+(e.kind==='InvalidRead'?'读取':'写入')+'非法。变量已初始化不代表指针有效、索引合法或对象仍存活。'),'abnormal');
    add('p','所属报告错误：'+e.id+' · 采集现场：'+(saved.captureId||'旧数据未提供现场文件名')).className='meta';
    if(e.records>1)add('p','本项合并了 '+e.records+' 条原始错误记录；以下仅来自上面标明的一次现场，不合并不同现场的变量值。').className='meta';
@@ -225,7 +228,10 @@ SCRIPT = r'''
    const candidates=new Set();for(const r of snapshot.frames||[])for(const e of index.get(normalize(r.file)+':'+Number(r.line))||[])candidates.add(e);
    const matches=[];for(const e of candidates){const frames=match(e,snapshot);if(frames)matches.push({e,frames})}
    if(matches.length!==1){unmatched++;if(matches.length>1)ambiguous++;continue}
-   const {e,frames}=matches[0];if(!captures.has(e.id)){captures.set(e.id,{snapshot,frames,captureId:item.id});changed=true}
+   const {e,frames}=matches[0];const previous=captures.get(e.id);
+   const readable=entry=>{const first=[...entry.frames.values()].find(f=>f.line_checks?.items?.length);const rows=first?first.line_checks.items:[...entry.frames.values()].flatMap(f=>f.variables||[]);return rows.some(v=>v.status==='available')};
+   const candidate={snapshot,frames,captureId:item.id};
+   if(!previous||(!readable(previous)&&readable(candidate))){candidate.replacedEmpty=!!previous;captures.set(e.id,candidate);changed=true}
   }
   const current=report.errors.find(e=>e.id===selected);if(current)paint(current);
   if(changed&&filter.checked)list();else markNavigation();

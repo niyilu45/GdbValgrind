@@ -113,6 +113,17 @@ class LineCheckTests(unittest.TestCase):
         self.assertTrue(all(v in self.checked for v in (length, index, item, count)))
         self.assertNotIn('unrelated', str(rows))
 
+    def test_coverage_counts_and_limit_are_explicit(self):
+        values = {'v'+str(i): Value(i) for i in range(40)}
+        del values['v1']
+        frame = SimpleNamespace(read_var=lambda name: values[name])
+        result = self.scope['check_source_expressions'](frame, {'identifiers': 'use('+','.join('v'+str(i) for i in range(40))+');'}, {})
+        self.assertTrue(result['truncated'])
+        self.assertEqual(result['coverage']['recognized'], 40)
+        self.assertEqual(result['coverage']['attempted'], 32)
+        self.assertEqual(result['coverage']['read'], 31)
+        self.assertEqual(result['coverage']['unread'], 1)
+
     def test_failed_read_is_an_explicit_item_not_replaced_by_other_locals(self):
         row = self.run_line('return missing;', {'unrelated': Value(99)})[0]
         self.assertEqual(row['name'], 'missing')

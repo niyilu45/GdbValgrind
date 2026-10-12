@@ -66,9 +66,9 @@ class Element {
  get textContent(){return (this.text||'')+this.children.map(n=>typeof n==='string'?n:n.textContent).join('')}
  set textContent(value){this.text=value;this.children=[]}
  constructor(){this.children=[];this.dataset={};this.style={};this.textContent=''}
- append(...nodes){this.children.push(...nodes)}
+ append(...nodes){this.children.push(...nodes);for(const n of nodes)if(typeof n==='object')n.parentNode=this}
  before(node){this.previous=node}
- remove(){}
+ remove(){if(this.parentNode)this.parentNode.children=this.parentNode.children.filter(n=>n!==this)}
 }
 const nodes=Object.fromEntries(['capture-status','resetFilters','detail','list','nav'].map(id=>[id,new Element()]));
 const error=(id,file,line=10)=>({id,kind:'InvalidWrite',what:'Invalid write of size 4',stacks:[{frames:[
@@ -200,7 +200,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v21'));
+assert(lineText.includes('变量查看器 v22'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.
@@ -209,6 +209,17 @@ first.frames[1].variables[0].value='FIRST_STOP';second.frames[1].variables[0].va
 report.errors[1].records=2;frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'dedup-test',items:[{id:'first',snapshot:first},{id:'second',snapshot:second}]});
 assert(frame.textContent.includes('FIRST_STOP'));assert(!frame.textContent.includes('SECOND_STOP'));
+// A later readable stop replaces an empty stop as a whole, independent of report order.
+const empty=runtime('bad.c');empty.frames[1].variables[0].status='unavailable';
+empty.frames[1].variables[0].value='EMPTY_STOP';
+frame.children=[];parentFrame.children=[];
+window.aivCaptureUpdate({live:true,replay_id:'retry-test',items:[{id:'empty',snapshot:empty}]});
+assert(frame.textContent.includes('EMPTY_STOP'));
+report.errors.reverse();
+window.aivCaptureUpdate({live:true,replay_id:'retry-test',items:[{id:'empty',snapshot:empty},{id:'success',snapshot:second}]});
+assert(frame.textContent.includes('SECOND_STOP'));assert(!frame.textContent.includes('EMPTY_STOP'));
+assert(frame.textContent.includes('未混合多次停止'));
+report.errors.reverse();
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-again',items:[{snapshot:struct}]});
 // Changed source text disables line-level claims instead of guessing.
@@ -223,5 +234,5 @@ window.aivCaptureUpdate({live:false,replay_id:'new-replay',items:[]});
 assert(nodes['capture-status'].textContent.includes('已关联 0 个错误'));
 '''
         script = SCRIPT.replace('<script>', '').replace('</script>', '')
-        result = subprocess.run(['node', '-e', setup+script+checks], capture_output=True, text=True, encoding='utf-8')
+        result = subprocess.run(['node'], input=setup+script+checks, capture_output=True, text=True, encoding='utf-8')
         self.assertEqual(result.returncode, 0, result.stderr)
