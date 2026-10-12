@@ -13,7 +13,7 @@ from inc import cli
 
 
 class CaptureTests(unittest.TestCase):
-    def array_prefix(self, raw, index, high, element=None, budget=None):
+    def array_prefix(self, raw, index, high, element=None, budget=None, member_path=()):
         element = element or self.value_type()
         array = SimpleNamespace(address=0x100, type=self.value_type(6, (high+1)*element.sizeof, target=lambda: element))
         calls = []
@@ -23,7 +23,7 @@ class CaptureTests(unittest.TestCase):
             calls.append((address, length))
             return ''.join(raw[address-0x100:address-0x100+length])
         self.gdb.execute = execute
-        result = self.scope['check_array_prefix'](array, index, 0, high, budget if budget is not None else {})
+        result = self.scope['check_array_prefix'](array, index, 0, high, budget if budget is not None else {}, member_path)
         return result, calls
 
     def test_array_prefix_scans_beyond_256_bytes_and_merges_ranges(self):
@@ -94,6 +94,85 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(result['checked_elements'], 0)
         self.assertFalse(result['coverage_complete'])
         self.assertEqual(result['ranges'], [{'start':0,'end':4,'status':'unchecked'}])
+
+    def test_struct_array_member_only_checks_same_member_in_previous_elements(self):
+        integer = self.value_type()
+        fields = [SimpleNamespace(name='member',bitpos=0,bitsize=0,type=integer),
+                  SimpleNamespace(name='other',bitpos=32,bitsize=0,type=integer)]
+        struct_type = self.value_type(7,8,fields=lambda:fields)
+        array_type = self.value_type(6,288*8,target=lambda:struct_type,range=lambda:(0,287))
+        class Value:
+            is_optimized_out = False
+            def __init__(self, t, address, children=None):
+                self.type, self.address, self.children = t, address, children
+            def __getitem__(self, key):
+                return self.children[key]
+            def format_string(self, **kwargs):
+                return '126'
+        rows = [Value(struct_type,0x100+i*8,{'member':Value(integer,0x100+i*8)}) for i in range(288)]
+        array = Value(array_type,0x100,rows)
+        data = ['00']*(288*8)
+        data[7*8+4] = 'ff'  # An unused member of an earlier element is undefined.
+        calls = []
+        def execute(command, **kwargs):
+            words = command.split(); address, size = int(words[-2],16), int(words[-1])
+            calls.append((address,size))
+            return ''.join(data[address-0x100:address-0x100+size])
+        self.gdb.execute = execute
+        frame = SimpleNamespace(read_var=lambda name:array)
+        result = self.scope['check_source_expressions'](frame,{'identifiers':'return arr[26].member;'}, {'queries':256,'bytes':32768})
+        row = result['items'][0]
+        self.assertEqual(row['value'], '126')
+        self.assertEqual(row['initialization']['status'], 'defined')
+        prefix = row['index_accesses'][0]['prefix_check']
+        self.assertEqual(prefix['checked_elements'], 27)
+        self.assertEqual(prefix['checked_bytes'], 108)
+        self.assertEqual(prefix['member_path'], 'member')
+        self.assertEqual(prefix['ranges'], [{'start':0,'end':26,'status':'defined'}])
+        self.assertTrue(all(size == 4 and (address-0x100)%8 == 0 for address,size in calls))
+        self.assertIn((0x100+26*8,4), calls)
+        data[7*8] = 'ff'
+        result = self.scope['check_source_expressions'](frame,{'identifiers':'return arr[26].member;'}, {'queries':256,'bytes':32768})
+        self.assertIn({'start':7,'end':7,'status':'undefined'}, result['items'][0]['index_accesses'][0]['prefix_check']['ranges'])
+
+    def test_nested_member_offsets_and_cache_are_member_specific(self):
+        integer = self.value_type()
+        inner = self.value_type(7,8,fields=lambda:[SimpleNamespace(name='x',bitpos=32,bitsize=0,type=integer)])
+        outer = self.value_type(7,16,fields=lambda:[SimpleNamespace(name='nested',bitpos=64,bitsize=0,type=inner),
+                                                 SimpleNamespace(name='other',bitpos=0,bitsize=0,type=integer)])
+        raw = ['ff']*48
+        for i in range(3): raw[i*16+12:i*16+16] = ['00']*4
+        budget = {}
+        result,calls = self.array_prefix(raw,2,2,outer,budget,('nested','x'))
+        self.assertEqual(result['ranges'],[{'start':0,'end':2,'status':'defined'}])
+        self.assertEqual(calls,[(0x10c,4),(0x11c,4),(0x12c,4)])
+        other,calls = self.array_prefix(raw,2,2,outer,budget,('other',))
+        self.assertEqual(other['ranges'],[{'start':0,'end':2,'status':'undefined'}])
+        self.assertEqual(len(calls),3)
+
+    def test_large_struct_prefix_is_chunked_and_reused(self):
+        fields = [SimpleNamespace(name='member',bitpos=0,bitsize=0,type=self.value_type())]
+        element = self.value_type(7,8192,fields=lambda:fields)
+        budget = {}
+        result, calls = self.array_prefix(['00']*(8192*27),26,287,element,budget)
+        self.assertEqual(result['checked_elements'],27)
+        self.assertTrue(result['coverage_complete'])
+        self.assertEqual(len(calls),54)
+        self.assertTrue(all(size <= 4096 for _,size in calls))
+        remaining = dict(budget['array_prefix'])
+        reused, calls = self.array_prefix([],26,287,element,budget)
+        self.assertTrue(reused['reused'])
+        self.assertEqual(calls,[])
+        self.assertEqual(reused['checked_bytes'],8192*27)
+        self.assertEqual(remaining,budget['array_prefix'])
+        partial, _ = self.array_prefix(['00']*(8192*27),26,287,element,
+                                      {'array_prefix':{'queries':3,'bytes':1048576,'ranges':512}})
+        self.assertEqual(partial['checked_elements'],1)
+        self.assertEqual(partial['checked_bytes'],8192)
+        self.assertEqual(partial['queried_bytes'],12288)
+        self.assertFalse(partial['coverage_complete'])
+        self.assertEqual(partial['ranges'][-1],{'start':1,'end':26,'status':'unchecked'})
+        self.assertIn('查询预算已耗尽',partial['reason'])
 
     def test_source_line_beyond_one_mib_with_bounded_window(self):
         source = self.root / 'large.c'

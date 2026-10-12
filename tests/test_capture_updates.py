@@ -217,6 +217,12 @@ assert(actualLine.includes('检查 4 / 4 字节'));
 assert(actualLine.includes('数组区间 0～26：已检查 27 个元素'));
 assert(actualLine.includes('已分类检查 108 / 108 字节'));
 assert(actualLine.includes('已检查地址 0x100～0x16b'));
+const memberEvidence=prefixRow('records[idx].member',26,[0,26],[{start:0,end:26,status:'defined'}]);
+Object.assign(memberEvidence.index_accesses[0].prefix_check,{member_path:'member',element_stride:16,evidence_version:1,element_bytes:4,checked_bytes:108,target_bytes:108,queried_bytes:108,start_address:'0x104',end_address:'0x2a7',queries:[]});
+actualLine=lineSummary('use(records[idx].member);',[],[],'use(records[idx].member);',[memberEvidence]);
+assert(actualLine.includes('records[*].member：下标 0～26'));
+assert(actualLine.includes('只查询成员 member；结构体步长 16 字节'));
+assert(actualLine.includes('地址首尾之间的其他成员不在检查范围内'));
 actualLine=lineSummary('use(stale[idx]);',[],[],'use(stale[idx]);',[prefixRow('stale[idx]',26,[0,0],[{start:0,end:0,status:'defined'}],1)]);
 assert(actualLine.includes('范围检查记录与当前下标不一致'));assert(!actualLine.includes('0～0：初始化及内存可访问性检查通过'));
 actualLine=lineSummary('use(part[idx]);',[],[],'use(part[idx]);',[prefixRow('part[idx]',26,[0,26],[{start:0,end:0,status:'defined'},{start:1,end:26,status:'unchecked'}],1,false)]);
@@ -289,7 +295,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v32'));
+assert(lineText.includes('变量查看器 v33'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.

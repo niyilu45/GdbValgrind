@@ -2,12 +2,14 @@
 
 LINE_CHECK_SCRIPT = r'''
 import ast
+from copy import deepcopy
 
-def check_array_prefix(base, index, low, high, budget):
+def check_array_prefix(base, index, low, high, budget, member_path=()):
     """Batch validity queries; compress adjacent elements with the same state."""
     result = {'requested': [0, index], 'bounds': [low, high], 'ranges': [],
               'checked_elements': 0, 'coverage_complete': False,
               'evidence_version': 1, 'checked_bytes': 0, 'queried_bytes': 0, 'queries': [],
+              'member_path': '.'.join(member_path),
               'note': '检查数组元素自身的存储；通过不代表业务取值合理，也不证明指针指向对象已分配。'}
     def append(first, last, state):
         if first > last:
@@ -27,33 +29,64 @@ def check_array_prefix(base, index, low, high, budget):
         if start <= end:
             element = base.type.strip_typedefs().target()
             stride = int(element.sizeof)
-            if stride <= 0 or stride > 65536:
-                raise ValueError('单个元素大小未知或超过 65536 字节，未检查该范围')
-            offsets, layout_complete = initialization_layout(element, stride)
+            selected_type, member_offset = element, 0
+            for name in member_path:
+                selected_type = selected_type.strip_typedefs()
+                if selected_type.code != gdb.TYPE_CODE_STRUCT:
+                    raise ValueError('成员路径跨越指针或不支持的布局，不展开其他成员')
+                fields = [f for f in selected_type.fields() if getattr(f, 'name', None) == name]
+                if len(fields) != 1:
+                    raise ValueError('无法唯一确定成员布局：' + name)
+                field = fields[0]
+                bitpos = getattr(field, 'bitpos', None)
+                if bitpos is None or bitpos < 0 or bitpos % 8 or getattr(field, 'bitsize', 0):
+                    raise ValueError('静态成员、位域或未知成员偏移，未检查该成员范围')
+                member_offset += bitpos // 8
+                selected_type = field.type
+            width = int(selected_type.sizeof)
+            if stride <= 0 or width <= 0 or width > 65536 or member_offset+width > stride:
+                raise ValueError('目标成员大小或偏移不可用，或单次目标超过 65536 字节')
+            result['note'] += (' 仅检查每个元素的 ' + '.'.join(member_path) + ' 成员，其他成员不参与判定。') if member_path else ''
+            offsets, layout_complete = initialization_layout(selected_type, width)
             used = sorted(offsets)
             if base.address is None:
                 raise ValueError('数组没有可取地址的存储，无法查询内存有效性')
             address = int(base.address)
-            result.update(element_bytes=stride, target_bytes=(end-start+1)*stride,
-                          start_address='0x%x' % (address+(start-low)*stride))
+            cache = budget.setdefault('array_prefix_cache', {})
+            cache_key = (address, str(element), stride, low, high, index, tuple(member_path), member_offset, width)
+            if cache_key in cache:
+                cached = deepcopy(cache[cache_key])
+                cached['reused'] = True
+                return cached
+            result.update(element_bytes=width, element_stride=stride, target_bytes=(end-start+1)*width,
+                          start_address='0x%x' % (address+(start-low)*stride+member_offset))
             # Separate budget: scanning a prefix must not consume the current
             # element's normal checks. Shared across all frames in one stop.
             remaining = budget.setdefault('array_prefix', {'queries': 256, 'bytes': 1048576, 'ranges': 512})
+            result['budget_before'] = dict(remaining)
             while cursor <= end:
-                if remaining['queries'] <= 0 or remaining['bytes'] < stride or remaining['ranges'] <= 0:
-                    raise ValueError('本次现场数组范围检查达到预算（1 MiB、256 次批量查询或 512 段结果），剩余范围未检查')
-                count = min(end - cursor + 1, max(1, 4096 // stride), remaining['bytes'] // stride)
-                length = count * stride
-                remaining['queries'] -= 1
-                remaining['bytes'] -= length
-                query_address = address + (cursor-low)*stride
-                bits = parse_vbits(capture_execute('monitor get_vbits 0x%x %d' % (query_address, length)), length)
-                result['queries'].append({'address': '0x%x' % query_address, 'bytes': length})
-                result['queried_bytes'] += length
+                if remaining['queries'] <= 0 or remaining['bytes'] < width or remaining['ranges'] <= 0:
+                    raise ValueError('数组范围检查预算不足：每项目标 %d 字节，剩余 %d 字节、%d 次查询、%d 段结果；尚有 %d 个元素未检查' % (width, remaining['bytes'], remaining['queries'], remaining['ranges'], end-cursor+1))
+                count = min(end - cursor + 1, max(1, 4096 // width) if width == stride else 1, remaining['bytes'] // width)
+                length = count * width
+                query_address = address + (cursor-low)*stride + member_offset
+                bits = []
+                # Large struct elements must not produce an oversized monitor
+                # request. Gather all chunks before classifying the element.
+                for byte_offset in range(0, length, 4096):
+                    chunk_size = min(4096, length-byte_offset)
+                    if remaining['queries'] <= 0:
+                        raise ValueError('结构体元素分块检查时查询预算已耗尽，该元素及后续元素未完成检查')
+                    remaining['queries'] -= 1
+                    remaining['bytes'] -= chunk_size
+                    chunk_address = query_address+byte_offset
+                    bits.extend(parse_vbits(capture_execute('monitor get_vbits 0x%x %d' % (chunk_address, chunk_size)), chunk_size))
+                    result['queries'].append({'address': '0x%x' % chunk_address, 'bytes': chunk_size})
+                    result['queried_bytes'] += chunk_size
                 for offset in range(count):
                     if remaining['ranges'] <= 0:
                         raise ValueError('结果区间过多，剩余范围未检查')
-                    storage = bits[offset*stride:(offset+1)*stride]
+                    storage = bits[offset*width:(offset+1)*width]
                     selected = [storage[n] for n in used]
                     if None in storage:
                         state = 'unaddressable'
@@ -67,8 +100,8 @@ def check_array_prefix(base, index, low, high, budget):
                     append(cursor, cursor, state)
                     remaining['ranges'] -= len(result['ranges']) - before
                     result['checked_elements'] += 1
-                    result['checked_bytes'] += stride
-                    result['end_address'] = '0x%x' % (address+(cursor-low+1)*stride-1)
+                    result['checked_bytes'] += width
+                    result['end_address'] = '0x%x' % (address+(cursor-low)*stride+member_offset+width-1)
                     cursor += 1
     except Exception as exc:
         if disconnected(str(exc)):
@@ -77,6 +110,8 @@ def check_array_prefix(base, index, low, high, budget):
     append(cursor, end, 'unchecked')
     append(max(0, high + 1), index, 'out_of_bounds')
     result['coverage_complete'] = cursor > end
+    if result['coverage_complete'] and start <= end and len(cache) < 128:
+        cache[cache_key] = deepcopy(result)
     return result
 
 def check_source_expressions(frame, source, budget):
@@ -154,6 +189,14 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                 label = ast.get_source_segment(text, node)
                 if label:
                     node._aiv_label = re.sub(r'\b[A-Za-z_]\w*\b', lambda m: aliases.get(m.group(), m.group()), label)
+            parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Subscript):
+                    current, path = node, []
+                    while isinstance(parents.get(current), ast.Attribute) and parents[current].value is current:
+                        current = parents[current]
+                        path.append(current.attr)
+                    node._aiv_member_path = tuple(path)
             return tree
 
         def name_value(name):
@@ -244,7 +287,8 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                     raise ValueError('动态指针长度未知，未读取该索引元素')
                 low, high = map(int, kind.range())
                 access['bounds'] = [low, high]
-                access['prefix_check'] = check_array_prefix(base, index, low, high, budget)
+                path = getattr(node, '_aiv_member_path', ())
+                access['prefix_check'] = check_array_prefix(base, index, low, high, budget, path) if path else check_array_prefix(base, index, low, high, budget)
                 if not low <= index <= high:
                     row['initialization'] = {'status': 'out_of_bounds'}
                     raise ValueError('实际索引 %s，合法范围 %s～%s；未读取越界元素' % (index, low, high))
