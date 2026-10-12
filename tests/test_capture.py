@@ -126,6 +126,8 @@ class CaptureTests(unittest.TestCase):
                 return self.children[key]
             def format_string(self, **kwargs):
                 return '126'
+            def __int__(self):
+                return 26
         rows = [Value(struct_type,0x100+i*8,{'member':Value(integer,0x100+i*8)}) for i in range(288)]
         array = Value(array_type,0x100,rows)
         data = ['00']*(288*8)
@@ -134,6 +136,8 @@ class CaptureTests(unittest.TestCase):
         def execute(command, **kwargs):
             words = command.split(); address, size = int(words[-2],16), int(words[-1])
             calls.append((address,size))
+            if address == 0x2000:
+                return '00'*size
             return ''.join(data[address-0x100:address-0x100+size])
         self.gdb.execute = execute
         frame = SimpleNamespace(read_var=lambda name:array)
@@ -148,6 +152,42 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(prefix['ranges'], [{'start':0,'end':26,'status':'defined'}])
         self.assertTrue(all(size == 4 and (address-0x100)%8 == 0 for address,size in calls))
         self.assertIn((0x100+26*8,4), calls)
+        index_value = Value(integer, 0x2000)
+        context = Value(struct_type,0x2000,{'index':index_value})
+        owner = Value(struct_type,0x2000,{'ru':array,'index':index_value})
+        st = Value(self.value_type(4,8,target=lambda:struct_type),0x2000)
+        st.dereference = lambda:owner
+        variable_frame = SimpleNamespace(read_var=lambda name:{'arr':array,'index':index_value,'ctx':context,'st':st}[name])
+        for expression in ('arr[index].member','arr[ctx.index].member','arr[index + 0].member',
+                           'st->ru[26].member','st->ru[index].member','st->ru[st->index].member'):
+            with self.subTest(expression=expression):
+                actual = self.scope['check_source_expressions'](variable_frame,{'identifiers':'return '+expression+';'}, {'queries':256,'bytes':32768})['items'][0]
+                access = actual['index_accesses'][0]
+                self.assertEqual(access['actual_index'],26)
+                self.assertEqual(access['prefix_check']['requested'],[0,26])
+                self.assertEqual(access['prefix_check']['checked_elements'],27)
+                self.assertEqual(access['prefix_check']['checked_bytes'],108)
+        class PointerValue(Value):
+            def __int__(self):
+                return 0x100
+        pointer = PointerValue(self.value_type(4,8,target=lambda:struct_type),0x2000,rows)
+        owner.children['ru'] = pointer
+        dynamic = self.scope['check_source_expressions'](variable_frame,{'identifiers':'return st->ru[index].member;'}, {'queries':256,'bytes':32768})['items'][0]
+        self.assertEqual(dynamic['index_accesses'][0]['actual_index'],26)
+        self.assertIsNone(dynamic['index_accesses'][0]['bounds'])
+        probe = dynamic['index_accesses'][0]['prefix_check']
+        self.assertEqual(probe['range_basis'],'index_probe')
+        self.assertIsNone(probe['bounds'])
+        self.assertEqual(probe['checked_elements'],27)
+        self.assertEqual(probe['checked_bytes'],108)
+        self.assertEqual(dynamic['status'],'available')
+        # An unaddressable selected member is never read through GDB.Value.
+        data[26*8:26*8+4] = ['__']*4
+        pointer.children = {}  # Any indexing now raises; the probe must avoid it.
+        bad = self.scope['check_source_expressions'](variable_frame,{'identifiers':'return st->ru[index].member;'}, {'queries':256,'bytes':32768})['items'][0]
+        self.assertIn('不读取其值',bad['value'])
+        self.assertEqual(bad['index_accesses'][0]['prefix_check']['ranges'][-1], {'start':26,'end':26,'status':'unaddressable'})
+        data[26*8:26*8+4] = ['00']*4
         data[7*8] = 'ff'
         result = self.scope['check_source_expressions'](frame,{'identifiers':'return arr[26].member;'}, {'queries':256,'bytes':32768})
         self.assertIn({'start':7,'end':7,'status':'undefined'}, result['items'][0]['index_accesses'][0]['prefix_check']['ranges'])
@@ -166,6 +206,27 @@ class CaptureTests(unittest.TestCase):
         other,calls = self.array_prefix(raw,2,2,outer,budget,('other',))
         self.assertEqual(other['ranges'],[{'start':0,'end':2,'status':'undefined'}])
         self.assertEqual(len(calls),3)
+
+    def test_dynamic_pointer_null_unknown_and_overflow_do_not_probe_memory(self):
+        pointer_type = self.value_type(4,8,target=lambda:self.value_type())
+        class Pointer:
+            type = pointer_type
+            address = 0x2000
+            def __init__(self, value): self.value = value
+            def __int__(self): return self.value
+        for value, bits, expected in ((0,'00','空指针'),(0x100,'ff','未确认完整初始化'),((1<<64)-2,'00','超出目标指针地址范围')):
+            with self.subTest(value=value,bits=bits):
+                calls = []
+                def execute(command, **kwargs):
+                    calls.append(command)
+                    return bits*8
+                self.gdb.execute = execute
+                result = self.scope['check_array_prefix'](Pointer(value),26,0,26,{'queries':256,'bytes':32768},dynamic=True)
+                self.assertEqual(len(calls),1)  # Only the pointer's own initialized storage.
+                self.assertIn('0x2000 8',calls[0])
+                self.assertEqual(result['checked_elements'],0)
+                self.assertIn(expected,result['reason'])
+                self.assertIsNone(result['bounds'])
 
     def test_large_struct_prefix_is_chunked_and_reused(self):
         fields = [SimpleNamespace(name='member',bitpos=0,bitsize=0,type=self.value_type())]

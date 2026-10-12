@@ -4,14 +4,17 @@ LINE_CHECK_SCRIPT = r'''
 import ast
 from copy import deepcopy
 
-def check_array_prefix(base, index, low, high, budget, member_path=()):
+def check_array_prefix(base, index, low, high, budget, member_path=(), dynamic=False):
     """Batch validity queries; compress adjacent elements with the same state."""
-    result = {'requested': [0, index], 'bounds': [low, high], 'ranges': [],
+    result = {'requested': [0, index], 'bounds': None if dynamic else [low, high], 'ranges': [],
+              'range_basis': 'index_probe' if dynamic else 'declared_array',
               'checked_elements': 0, 'coverage_complete': False,
               'evidence_version': 1, 'checked_bytes': 0, 'queried_bytes': 0, 'queries': [],
               'member_path': '.'.join(member_path),
               'attempted_elements': 0, 'failed_elements': 0, 'query_errors': [],
               'note': '检查数组元素自身的存储；通过不代表业务取值合理，也不证明指针指向对象已分配。'}
+    if dynamic:
+        result['note'] = '按索引推导的待检查范围，不是合法数组范围；分配长度未知。即使地址可访问，也不证明属于同一分配对象或业务取值正确。'
     def append(first, last, state):
         if first > last:
             return
@@ -50,11 +53,23 @@ def check_array_prefix(base, index, low, high, budget, member_path=()):
             result['note'] += (' 仅检查每个元素的 ' + '.'.join(member_path) + ' 成员，其他成员不参与判定。') if member_path else ''
             offsets, layout_complete = initialization_layout(selected_type, width)
             used = sorted(offsets)
-            if base.address is None:
-                raise ValueError('数组没有可取地址的存储，无法查询内存有效性')
-            address = int(base.address)
+            if dynamic:
+                pointer_info = check_initialization(base, budget)
+                result['pointer_initialization'] = pointer_info
+                if pointer_info.get('status') != 'defined' or pointer_info.get('complete') is False:
+                    raise ValueError('指针自身未确认完整初始化，不使用其地址探测成员范围')
+                address = int(base)
+                if address == 0:
+                    raise ValueError('空指针，不探测其派生成员地址')
+                address_max = (1 << (int(base.type.sizeof)*8)) - 1
+                if address < 0 or address + (end-low)*stride + member_offset + width - 1 > address_max:
+                    raise ValueError('待检查地址超出目标指针地址范围，不进行溢出地址探测')
+            else:
+                if base.address is None:
+                    raise ValueError('数组没有可取地址的存储，无法查询内存有效性')
+                address = int(base.address)
             cache = budget.setdefault('array_prefix_cache', {})
-            cache_key = (address, str(element), stride, low, high, index, tuple(member_path), member_offset, width)
+            cache_key = (address, str(element), stride, low, high, index, tuple(member_path), member_offset, width, dynamic)
             if cache_key in cache:
                 cached = deepcopy(cache[cache_key])
                 cached['reused'] = True
@@ -307,11 +322,17 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                           'actual_index':index, 'bounds':None}
                 row.setdefault('index_accesses', []).append(access)
                 kind = base.type.strip_typedefs()
+                path = getattr(node, '_aiv_member_path', ())
+                if kind.code == gdb.TYPE_CODE_PTR:
+                    access['prefix_check'] = check_array_prefix(base, index, 0, index, budget, path, dynamic=True)
+                    current = next((r['status'] for r in access['prefix_check']['ranges'] if r['start'] <= index <= r['end']), 'unchecked')
+                    if current not in ('defined', 'undefined'):
+                        raise ValueError('动态指针分配长度未知，当前目标成员未确认可访问；仅保留区间探测结果，不读取其值')
+                    return base[index]
                 if kind.code != gdb.TYPE_CODE_ARRAY:
                     raise ValueError('动态指针长度未知，未读取该索引元素')
                 low, high = map(int, kind.range())
                 access['bounds'] = [low, high]
-                path = getattr(node, '_aiv_member_path', ())
                 access['prefix_check'] = check_array_prefix(base, index, low, high, budget, path) if path else check_array_prefix(base, index, low, high, budget)
                 if not low <= index <= high:
                     row['initialization'] = {'status': 'out_of_bounds'}

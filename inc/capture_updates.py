@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v34
+// aiv-stack-captures-v36
 (()=>{
  let running=true,timer,activeReplay=null,loadedRevision=null,probeRevision=null;const captures=new Map(),readableIds=new Set(),processed=new Map();
  const status=document.getElementById('capture-status');
@@ -135,10 +135,10 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v34 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v36 · '+(directChecks?'本行表达式 '+frame.line_checks.items.length+' 个（不是数组元素个数）'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
    for(const note of [frame.note,...(frame.inspection_errors||[]),!frame.source_line?.text&&frame.source_line?.note].filter(Boolean))add('p','采集说明：'+note).className='meta';
    if(directChecks){const rows=frame.line_checks.items,read=rows.filter(v=>v.status==='available').length,unknown=rows.filter(v=>['unknown','partial_check'].includes(v.initialization?.status||'unknown')).length;
-    add('p','读取成功 '+read+' / '+rows.length+' 项；未读到 '+(rows.length-read)+' 项；初始化检查不完整或未知 '+unknown+' 项。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
+    add('p','表达式读取成功 '+read+' / '+rows.length+' 个；未读到 '+(rows.length-read)+' 个；初始化检查不完整或未知 '+unknown+' 个。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'数组成员实际检查数量见下方区间检查。仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
    if(saved.replacedEmpty)add('p','首次现场没有读到本行变量，现展示后续首次读到值的完整现场；未混合多次停止的变量。').className='meta';
    if(['InvalidRead','InvalidWrite'].includes(e.kind))colorState(add('p','Valgrind 已确认本次'+(e.kind==='InvalidRead'?'读取':'写入')+'非法。变量已初始化不代表指针有效、索引合法或对象仍存活。'),'abnormal');
    add('p','所属报告错误：'+e.id+' · 采集现场：'+(saved.captureId||'旧数据未提供现场文件名')).className='meta';
@@ -209,6 +209,7 @@ SCRIPT = r'''
        colorState(add('p','当前下标 '+row.index+'，应检查 0～'+row.index+'；已保存范围 '+(p.requested||[]).join('～')+'。不采用这份范围结果，请重新执行步骤三。',box),'uncertain');continue;
       }
       add('summary',row.base+'：下标 '+p.requested.join('～')+' 范围检查（已检查 '+p.checked_elements+' 个元素；'+(p.coverage_complete?'范围扫描完成':'存在未检查范围')+'）',box);
+      if(p.range_basis==='index_probe')add('p','动态指针：0～'+row.index+' 仅为按索引推导的待检查范围，分配长度和合法数组边界未知。',box);
       if(p.attempted_elements!==undefined)add('p','尝试检查 '+p.attempted_elements+' 项；成功核对 '+p.checked_elements+' 项；查询失败 '+(p.failed_elements||0)+' 项。',box);
       if(!p.coverage_complete)box.open=true;
       add('p','当前下标 '+row.index+'；应覆盖 0～'+row.index+'。下面每行是一段检查结果，不代表整个检查范围。',box);
@@ -255,6 +256,7 @@ SCRIPT = r'''
      if(!p){evidenceLines.push(name+' 数组区间：现场未保存区间检查依据，不能用当前元素的字节数推断整个区间已检查。');continue}
      if(!Array.isArray(p.requested)||p.requested[0]!==0||p.requested[1]!==access.actual_index||(p.bounds&&access.bounds&&JSON.stringify(p.bounds)!==JSON.stringify(access.bounds))){evidenceLines.push(name+' 数组区间：范围记录与当前下标不一致，不采用其检查依据。');continue}
      evidenceLines.push(name+' 数组区间 '+p.requested.join('～')+'：已检查 '+p.checked_elements+' 个元素；'+(p.coverage_complete?'范围扫描完成':'存在未检查范围'));
+     if(p.range_basis==='index_probe')evidenceLines.push('  范围来源：当前索引值推导的地址探测，未确认分配长度；可访问不等于未越过原对象边界。');
      if(p.evidence_version===1){
       evidenceLines.push('  每元素 '+(p.element_bytes??'未知')+' 字节；已分类检查 '+p.checked_bytes+' / '+(p.target_bytes??'未知')+' 字节；成功查询有效位 '+p.queried_bytes+' 字节（两者不相加）。');
       if(p.member_path)evidenceLines.push('  只查询成员 '+p.member_path+'；结构体步长 '+p.element_stride+' 字节。地址首尾之间的其他成员不在检查范围内。');

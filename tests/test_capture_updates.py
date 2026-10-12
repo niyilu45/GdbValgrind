@@ -223,6 +223,11 @@ actualLine=lineSummary('use(records[idx].member);',[],[],'use(records[idx].membe
 assert(actualLine.includes('records[*].member：下标 0～26'));
 assert(actualLine.includes('只查询成员 member；结构体步长 16 字节'));
 assert(actualLine.includes('地址首尾之间的其他成员不在检查范围内'));
+memberEvidence.index_accesses[0].bounds=null;
+Object.assign(memberEvidence.index_accesses[0].prefix_check,{bounds:null,range_basis:'index_probe'});
+actualLine=lineSummary('consume(records[idx].member);',[],[],'consume(records[idx].member);',[memberEvidence]);
+assert(actualLine.includes('仅为按索引推导的待检查范围，分配长度和合法数组边界未知'));
+assert(actualLine.includes('未确认分配长度；可访问不等于未越过原对象边界'));
 const failedMember=prefixRow('retry[idx].member',26,[0,26],[{start:0,end:0,status:'defined'},{start:1,end:1,status:'unknown'},{start:2,end:26,status:'defined'}],26,false);
 Object.assign(failedMember.index_accesses[0].prefix_check,{member_path:'member',attempted_elements:27,failed_elements:1,query_errors:[{start:1,end:1,address:'0x108',bytes:4,reason:'format mismatch',response:'unavailable'}]});
 actualLine=lineSummary('use(retry[idx].member);',[],[],'use(retry[idx].member);',[failedMember]);
@@ -291,7 +296,7 @@ lineText=lineSummary('', [scalar('NO_SOURCE_VARIABLE','999')]);
 assert(!lineText.includes('NO_SOURCE_VARIABLE'));
 lineText=lineSummary('use(ptr->length);', [scalar('unrelated','WRONG_FRAME_VALUE')], [], 'use(ptr->length);',
  [{name:'ptr->length',role:'source_expression',status:'available',value:'123',initialization:{status:'undefined'}}]);
-assert(lineText.includes('本行逐项检查 1 项'));assert(lineText.includes('实际值：123'));
+assert(lineText.includes('本行表达式 1 个（不是数组元素个数）'));assert(lineText.includes('实际值：123'));
 assert(lineText.includes('检查结果：未初始化'));assert(!lineText.includes('unrelated'));assert(!lineText.includes('WRONG_FRAME_VALUE'));
 lineText=lineSummary('return table[i];', [],[{expression:'table[i]',base_expression:'table',index_expression:'i',status:'out_of_bounds',actual_index:99,bounds:[0,2]}]);
 assert(lineText.includes('下标 i = 99；table 的下标范围 0～2'));
@@ -302,7 +307,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v34'));
+assert(lineText.includes('变量查看器 v36'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.
