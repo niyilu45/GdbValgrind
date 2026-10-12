@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v30
+// aiv-stack-captures-v32
 (()=>{
  let running=true,timer,activeReplay=null,loadedRevision=null,probeRevision=null;const captures=new Map(),readableIds=new Set(),processed=new Map();
  const status=document.getElementById('capture-status');
@@ -93,8 +93,11 @@ SCRIPT = r'''
   const overall=indexAbnormal||prefixAbnormal||valueState==='abnormal'?'abnormal':prefixUnknown?'uncertain':valueState;
   lines.push({text:'\n'+v.name+(v.type?'（'+v.type+'）':'')+' · '+(v.role==='argument'?'函数参数':v.role==='source_expression'?'本行表达式逐项读取':'局部变量'),state:overall});
   if(v.macro_expansion)lines.push('当前源码位置的宏展开：'+v.macro_expansion);
-  for(const [position,raw] of (v.index_accesses||[]).entries()){const access=indexLabel(raw,v.name,v.index_accesses,position);lines.push('下标 '+(access.index_expression||'无法唯一对应（旧现场缺少名称，请重新采集）')+' = '+(access.actual_index??'未知')+'；'+(access.base_expression||'该数组')+' 的下标范围 '+(access.bounds?access.bounds.join('～')+'（元素索引）':'未知（没有可确认的数组边界）'))}
-  for(const access of v.index_accesses||[]){if(access.prefix_check)lines.push({prefix:access.prefix_check,base:access.base_expression||'该数组'})}
+  for(const [position,raw] of (v.index_accesses||[]).entries()){
+   const access=indexLabel(raw,v.name,v.index_accesses,position);
+   lines.push('下标 '+(access.index_expression||'无法唯一对应（旧现场缺少名称，请重新采集）')+' = '+(access.actual_index??'未知')+'；'+(access.base_expression||'该数组')+' 的下标范围 '+(access.bounds?access.bounds.join('～')+'（元素索引）':'未知（没有可确认的数组边界）'));
+   if(access.prefix_check)lines.push({prefix:access.prefix_check,base:access.base_expression||'该数组',index:access.actual_index,bounds:access.bounds});
+  }
   if(v.status&&v.status!=='available'){lines.push({text:'无法读取：'+v.value,state:'uncertain'});return lines}
   lines.push({text:'检查结果：'+(initLabels[info.status]||'未提供初始化检查结果'),state:overall});
   if(info.reason)lines.push('检查范围说明：'+info.reason);
@@ -132,7 +135,7 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v30 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v32 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
    for(const note of [frame.note,...(frame.inspection_errors||[]),!frame.source_line?.text&&frame.source_line?.note].filter(Boolean))add('p','采集说明：'+note).className='meta';
    if(directChecks){const rows=frame.line_checks.items,read=rows.filter(v=>v.status==='available').length,unknown=rows.filter(v=>['unknown','partial_check'].includes(v.initialization?.status||'unknown')).length;
     add('p','读取成功 '+read+' / '+rows.length+' 项；未读到 '+(rows.length-read)+' 项；初始化检查不完整或未知 '+unknown+' 项。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
@@ -201,7 +204,13 @@ SCRIPT = r'''
     }else{let first=true;for(const row of variableLines(v)){
      if(row.prefix){
       const p=row.prefix,box=add('details','',group);box.dataset.arrayPrefix='yes';
+      if(!Array.isArray(p.requested)||p.requested[0]!==0||p.requested[1]!==row.index||(p.bounds&&row.bounds&&JSON.stringify(p.bounds)!==JSON.stringify(row.bounds))){
+       box.open=true;add('summary',row.base+'：范围检查记录与当前下标不一致',box);
+       colorState(add('p','当前下标 '+row.index+'，应检查 0～'+row.index+'；已保存范围 '+(p.requested||[]).join('～')+'。不采用这份范围结果，请重新执行步骤三。',box),'uncertain');continue;
+      }
       add('summary',row.base+'：下标 '+p.requested.join('～')+' 范围检查（已检查 '+p.checked_elements+' 个元素；'+(p.coverage_complete?'范围扫描完成':'存在未检查范围')+'）',box);
+      if(!p.coverage_complete)box.open=true;
+      add('p','当前下标 '+row.index+'；应覆盖 0～'+row.index+'。下面每行是一段检查结果，不代表整个检查范围。',box);
       const labels={defined:'初始化及内存可访问性检查通过',undefined:'存在未初始化字节，值不可靠',unaddressable:'元素存储含不可访问内存',out_of_bounds:'超出数组边界，未读取',unknown:'布局或初始化状态无法确定',unchecked:'未检查，不能判断'};
       for(const r of p.ranges||[]){const line=add('p',r.start+'～'+r.end+'：'+(labels[r.status]||r.status),box);colorState(line,variableState(r.status))}
       if(p.reason)add('p',p.reason,box);add('p',p.note,box);continue;
@@ -239,7 +248,18 @@ SCRIPT = r'''
     if(info.undefined_byte_offsets?.length)notes.push('未初始化字节偏移 '+info.undefined_byte_offsets.join(', '));
     if(info.unaddressable_byte_offsets?.length)notes.push('不可访问字节偏移 '+info.unaddressable_byte_offsets.join(', '));
     if(info.reason)notes.push(info.reason);
-    evidenceLines.push(v.name+'：'+(notes.join('；')||'现场未提供逐字节检查依据，不能补推结论。'));
+    evidenceLines.push(v.name+'（当前表达式自身，不是整个数组区间）：'+(notes.join('；')||'现场未提供逐字节检查依据，不能补推结论。'));
+    for(const access of v.index_accesses||[]){
+     const p=access.prefix_check,name=access.base_expression||v.name;
+     if(!p){evidenceLines.push(name+' 数组区间：现场未保存区间检查依据，不能用当前元素的字节数推断整个区间已检查。');continue}
+     if(!Array.isArray(p.requested)||p.requested[0]!==0||p.requested[1]!==access.actual_index||(p.bounds&&access.bounds&&JSON.stringify(p.bounds)!==JSON.stringify(access.bounds))){evidenceLines.push(name+' 数组区间：范围记录与当前下标不一致，不采用其检查依据。');continue}
+     evidenceLines.push(name+' 数组区间 '+p.requested.join('～')+'：已检查 '+p.checked_elements+' 个元素；'+(p.coverage_complete?'范围扫描完成':'存在未检查范围'));
+     if(p.evidence_version===1){
+      evidenceLines.push('  每元素 '+(p.element_bytes??'未知')+' 字节；已分类检查 '+p.checked_bytes+' / '+(p.target_bytes??'未知')+' 字节；成功查询有效位 '+p.queried_bytes+' 字节（两者不相加）。');
+      if(p.checked_bytes>0)evidenceLines.push('  已检查地址 '+p.start_address+'～'+p.end_address+'；Valgrind get_vbits 成功查询 '+(p.queries||[]).length+' 次。');
+     }else evidenceLines.push('  旧现场未保存区间字节数及地址依据；需要重新执行步骤三补齐，不从当前元素的检查信息推算。');
+     if(p.reason)evidenceLines.push('  未完成原因：'+p.reason);
+    }
    }
    proof.textContent=evidenceLines.join('\n');
    const analysis=[];

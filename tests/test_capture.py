@@ -61,6 +61,25 @@ class CaptureTests(unittest.TestCase):
         self.assertTrue(result['coverage_complete'])
         self.assertEqual(result['ranges'], [{'start':0,'end':1199,'status':'defined'}])
 
+    def test_index_26_with_bounds_287_checks_all_27_elements(self):
+        result, calls = self.array_prefix(['00']*1152, 26, 287)
+        self.assertEqual(result['requested'], [0,26])
+        self.assertEqual(result['checked_elements'], 27)
+        self.assertEqual(result['element_bytes'], 4)
+        self.assertEqual(result['checked_bytes'], 108)
+        self.assertEqual(result['target_bytes'], 108)
+        self.assertEqual(result['queried_bytes'], 108)
+        self.assertEqual(result['start_address'], '0x100')
+        self.assertEqual(result['end_address'], '0x16b')
+        self.assertEqual(result['queries'], [{'address':'0x100','bytes':108}])
+        self.assertEqual(result['ranges'], [{'start':0,'end':26,'status':'defined'}])
+        self.assertEqual(calls, [(0x100,108)])
+        # A first result segment of 0..0 must not hide the remainder.
+        raw = ['00']*4 + ['ff']*104
+        result, _ = self.array_prefix(raw, 26, 287)
+        self.assertEqual(result['ranges'], [{'start':0,'end':0,'status':'defined'},
+                                          {'start':1,'end':26,'status':'undefined'}])
+
     def test_array_prefix_struct_padding_is_not_uninitialized_member(self):
         fields = [SimpleNamespace(name='x',bitpos=0,bitsize=0,type=self.value_type(5,1)),
                   SimpleNamespace(name='y',bitpos=32,bitsize=0,type=self.value_type())]

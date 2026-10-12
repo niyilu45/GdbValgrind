@@ -203,6 +203,25 @@ assert(actualLine.includes('已检查 21 个元素'));
 const descendants=n=>[n,...(n.children||[]).flatMap(descendants)];
 const prefixDetails=descendants(frame.children[0]).find(n=>n.dataset.arrayPrefix==='yes');
 assert(prefixDetails);assert(!prefixDetails.open);
+const prefixRow=(name,index,requested,ranges,checked=27,complete=true)=>({name,status:'available',value:'7',initialization:{status:'defined'},index_accesses:[{expression:name,base_expression:name.split('[')[0],index_expression:'idx',actual_index:index,bounds:[0,287],prefix_check:{requested,bounds:[0,287],checked_elements:checked,coverage_complete:complete,note:'range test',ranges}}]});
+actualLine=lineSummary('use(items[idx]);',[],[],'use(items[idx]);',[prefixRow('items[idx]',26,[0,26],[{start:0,end:0,status:'defined'},{start:1,end:26,status:'undefined'}])]);
+assert(actualLine.includes('应覆盖 0～26'));assert(actualLine.includes('已检查 27 个元素'));
+assert(actualLine.includes('0～0：初始化及内存可访问性检查通过'));assert(actualLine.includes('1～26：存在未初始化字节'));
+assert(actualLine.includes('旧现场未保存区间字节数及地址依据'));
+const evidenced=prefixRow('proofArray[idx]',26,[0,26],[{start:0,end:26,status:'defined'}]);
+evidenced.initialization={status:'defined',address:'0x168',checked_bytes:4,size_bytes:4,complete:true};
+Object.assign(evidenced.index_accesses[0].prefix_check,{evidence_version:1,element_bytes:4,checked_bytes:108,target_bytes:108,queried_bytes:108,start_address:'0x100',end_address:'0x16b',queries:[{address:'0x100',bytes:108}]});
+actualLine=lineSummary('use(proofArray[idx]);',[],[],'use(proofArray[idx]);',[evidenced]);
+assert(actualLine.includes('当前表达式自身，不是整个数组区间'));
+assert(actualLine.includes('检查 4 / 4 字节'));
+assert(actualLine.includes('数组区间 0～26：已检查 27 个元素'));
+assert(actualLine.includes('已分类检查 108 / 108 字节'));
+assert(actualLine.includes('已检查地址 0x100～0x16b'));
+actualLine=lineSummary('use(stale[idx]);',[],[],'use(stale[idx]);',[prefixRow('stale[idx]',26,[0,0],[{start:0,end:0,status:'defined'}],1)]);
+assert(actualLine.includes('范围检查记录与当前下标不一致'));assert(!actualLine.includes('0～0：初始化及内存可访问性检查通过'));
+actualLine=lineSummary('use(part[idx]);',[],[],'use(part[idx]);',[prefixRow('part[idx]',26,[0,26],[{start:0,end:0,status:'defined'},{start:1,end:26,status:'unchecked'}],1,false)]);
+assert(actualLine.includes('1～26：未检查'));
+assert(descendants(frame.children[0]).find(n=>n.dataset.arrayPrefix==='yes').open);
 function legacyIndices(name, accesses){
  const source='consume('+name+');';
  return lineSummary(source,[],[],source,[{name,status:'unavailable',value:'boundary unknown',initialization:{status:'unknown'},index_accesses:accesses}]);
@@ -270,7 +289,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v30'));
+assert(lineText.includes('变量查看器 v32'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.

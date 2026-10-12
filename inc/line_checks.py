@@ -7,6 +7,7 @@ def check_array_prefix(base, index, low, high, budget):
     """Batch validity queries; compress adjacent elements with the same state."""
     result = {'requested': [0, index], 'bounds': [low, high], 'ranges': [],
               'checked_elements': 0, 'coverage_complete': False,
+              'evidence_version': 1, 'checked_bytes': 0, 'queried_bytes': 0, 'queries': [],
               'note': '检查数组元素自身的存储；通过不代表业务取值合理，也不证明指针指向对象已分配。'}
     def append(first, last, state):
         if first > last:
@@ -33,6 +34,8 @@ def check_array_prefix(base, index, low, high, budget):
             if base.address is None:
                 raise ValueError('数组没有可取地址的存储，无法查询内存有效性')
             address = int(base.address)
+            result.update(element_bytes=stride, target_bytes=(end-start+1)*stride,
+                          start_address='0x%x' % (address+(start-low)*stride))
             # Separate budget: scanning a prefix must not consume the current
             # element's normal checks. Shared across all frames in one stop.
             remaining = budget.setdefault('array_prefix', {'queries': 256, 'bytes': 1048576, 'ranges': 512})
@@ -43,7 +46,10 @@ def check_array_prefix(base, index, low, high, budget):
                 length = count * stride
                 remaining['queries'] -= 1
                 remaining['bytes'] -= length
-                bits = parse_vbits(capture_execute('monitor get_vbits 0x%x %d' % (address + (cursor-low)*stride, length)), length)
+                query_address = address + (cursor-low)*stride
+                bits = parse_vbits(capture_execute('monitor get_vbits 0x%x %d' % (query_address, length)), length)
+                result['queries'].append({'address': '0x%x' % query_address, 'bytes': length})
+                result['queried_bytes'] += length
                 for offset in range(count):
                     if remaining['ranges'] <= 0:
                         raise ValueError('结果区间过多，剩余范围未检查')
@@ -61,6 +67,8 @@ def check_array_prefix(base, index, low, high, budget):
                     append(cursor, cursor, state)
                     remaining['ranges'] -= len(result['ranges']) - before
                     result['checked_elements'] += 1
+                    result['checked_bytes'] += stride
+                    result['end_address'] = '0x%x' % (address+(cursor-low+1)*stride-1)
                     cursor += 1
     except Exception as exc:
         if disconnected(str(exc)):
