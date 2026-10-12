@@ -207,6 +207,8 @@ aiv-goto 错误ID 0:0
 
 ## 3. SSH 环境：网页选择错误并启动 GDB
 
+普通 `debug` 自动选帧优先使用工程源码，避免首先选择 `allocator.h` 等系统库头文件。带 Python 支持的 GDB 导航会在断点无法解析时尝试同一错误的其他调用帧，并打印实际采用的断点；其他错误没有可用位置时跳过其导航断点。用户明确选择 `--frame` 或 `aiv-goto ID 帧序号` 时不替换该选择。目标所有候选均不可解析时，不继续运行，提示核对程序、调试符号与源码位置；尚未加载的共享库也可能暂时没有可解析断点。工程调用帧断点仅用于定位调用路径，不代表已经触发非法访问。
+
 若终端报 `Python scripting is not supported in this copy of GDB`，说明当前 GDB 没有编译 Python 扩展支持；仅安装 Python 或 pip 包不能解决。可在服务器运行 `command -v gdb` 和 `gdb -q -nx -nh -batch -ex "python import gdb; print('Python OK')"` 确认所用版本。普通调试会自动禁用 `aiv-goto` 并保留源码断点、`bt`、`info locals`、`print` 和 `continue`；切换错误时先 `quit`，再执行另一条错误的完整启动命令。`--auto-values` 必须更换为带 Python 支持的 GDB（确保 PATH 优先找到它），或移除此选项使用普通调试。GDB 的构建选项见 [官方 Python 支持说明](https://www.sourceware.org/gdb/current/onlinedocs/gdb.html/Python.html)。
 
 在本机建立 SSH 端口转发并登录 Linux，远程和本地端口请保持一致：

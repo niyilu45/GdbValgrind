@@ -19,11 +19,31 @@ class ReportNavigation:
             # Automatic capture stops on Valgrind errors, not historical source
             # locations (which may belong to unavailable system library symbols).
             if not config['auto_values'] and entry['default']:
-                bp = ReportLocation(self, entry['id'], entry['default'])
-                self.breakpoints.append(bp)
+                bp = self.create_location(entry)
                 if entry['id'] == self.target:
                     self.active = bp
+        if self.target and self.active is None:
+            raise gdb.GdbError('目标错误没有可解析的源码或符号断点，未继续程序。请检查可执行文件与报告是否一致、是否带调试符号，或使用 --frame 选择工程调用帧。')
         gdb.events.exited.connect(self.on_exit)
+
+    def create_location(self, entry, spec=None):
+        candidates = [spec] if spec else entry.get('candidates', [entry['default']])
+        for candidate in candidates:
+            if not candidate:
+                continue
+            try:
+                bp = ReportLocation(self, entry['id'], candidate)
+                if getattr(bp, 'pending', False):
+                    bp.delete()
+                    continue
+                self.breakpoints.append(bp)
+                if candidate != entry['default']:
+                    gdb.write('[AiValgrind] 原断点不可用，改用同一错误的调用帧：' + candidate + '\n')
+                return bp
+            except Exception as exc:
+                gdb.write('[AiValgrind] 无法设置断点 ' + candidate + '：' + str(exc) + '\n')
+        gdb.write('[AiValgrind] 报告第 %d 条当前没有可解析断点，跳过其导航断点。\n' % entry['order'])
+        return None
 
     def on_exit(self, event):
         self.exited = True
@@ -51,8 +71,9 @@ class ReportNavigation:
         if self.exited or (self.current is not None and
                 (target in self.seen or entry['order'] < self.entries[self.current]['order'])):
             return self.restart(target, frame)
-        bp = ReportLocation(self, target, spec)
-        self.breakpoints.append(bp)
+        bp = self.create_location(entry, spec if frame else None)
+        if bp is None:
+            raise gdb.GdbError('目标断点未解析，保留当前现场且不继续。请核对源码/符号，或指定工程调用帧。')
         self.active = bp
         self.target = target
         gdb.write('[AiValgrind] 继续到报告第 %d 条的源码位置；其他断点、信号或内存错误仍可能提前暂停。\n' % entry['order'])

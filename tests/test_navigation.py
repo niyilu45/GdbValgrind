@@ -26,6 +26,31 @@ class FakeCommand:
 
 
 class NavigationTests(unittest.TestCase):
+    def test_missing_library_breakpoint_falls_back_without_breaking_other_errors(self):
+        removed=[]
+        def location(nav,identity,spec):
+            if spec=='missing':
+                return SimpleNamespace(pending=True,delete=lambda:removed.append(spec))
+            return SimpleNamespace(pending=False,spec=spec)
+        config={**self.config,'entries':[
+            {'id':'a','order':1,'default':'missing','candidates':['missing'],'frames':{}},
+            {'id':'b','order':2,'default':'missing','candidates':['missing','project.c:17'],'frames':{}}]}
+        with patch.dict(self.scope,{'ReportLocation':location}):
+            nav=self.scope['ReportNavigation'](config)
+        self.assertEqual(nav.active.spec,'project.c:17')
+        self.assertEqual(len(nav.breakpoints),1)
+        self.assertEqual(len(removed),2)
+
+    def test_explicit_unavailable_frame_preserves_current_stop(self):
+        previous=self.nav.active
+        def location(*args):
+            raise ValueError('No source file named allocator.h')
+        with patch.dict(self.scope,{'ReportLocation':location}):
+            with self.assertRaisesRegex(ValueError,'保留当前现场'):
+                self.nav.navigate('c 0:0')
+        self.assertIs(self.nav.active,previous)
+        self.gdb.execute.assert_not_called()
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

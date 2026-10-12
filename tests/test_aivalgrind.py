@@ -197,6 +197,15 @@ class ReportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             av.breakpoint_command({"fn": "foo\nshell touch /tmp/oops"})
 
+    def test_debug_prefers_project_caller_over_library_header(self):
+        library={'dir':'/usr/include/c++/10/bits','file':'allocator.h','line':'42',
+                 'local_file':'/usr/include/c++/10/bits/allocator.h','fn':'std::allocator::allocate'}
+        caller={'dir':'/old/project','file':'main.cpp','line':'17','local_file':str(self.root/'main.cpp'),'fn':'run'}
+        item={'stacks':[{'frames':[library,caller]}]}
+        self.assertIs(av.pick_frame(item,project=self.root),caller)
+        self.assertIs(av.pick_frame(item),caller)
+        self.assertIs(av.pick_frame(item,'0:0',project=self.root),library)
+
     def test_cli_and_no_overwrite(self):
         self.load(xml(error()))
         output = self.root / "out.html"

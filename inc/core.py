@@ -392,7 +392,27 @@ def report_from_root(root, xml_path, project=None, xml_complete=True, progress=N
             "tool": root.findtext("tool", "memcheck")}
 
 
-def pick_frame(error, selected=None):
+def ranked_debug_frames(error, project=None):
+    frames = error['stacks'][0]['frames'] if error.get('stacks') else []
+    def priority(frame):
+        path = str(frame.get('local_file') or PurePosixPath(frame.get('dir', '')) / frame.get('file', '')).replace('\\', '/')
+        if project:
+            root = str(Path(project).resolve()).replace('\\', '/').rstrip('/')
+            if path.startswith(root + '/'):
+                return 0
+        system = bool(re.search(r'/(?:usr/(?:include|lib|lib64)|lib|lib64)/|/libstdc\+\+|/gcc/|/valgrind/|/include/c\+\+/', path))
+        system = system or str(frame.get('file', '')).startswith(('vg_', 'm_'))
+        if system:
+            return 4
+        if frame.get('local_file') and integer(frame.get('line')) > 0:
+            return 1
+        if frame.get('file') and integer(frame.get('line')) > 0:
+            return 2
+        return 3
+    return sorted([f for f in frames if (f.get('file') and integer(f.get('line')) > 0) or f.get('fn')], key=priority)
+
+
+def pick_frame(error, selected=None, project=None):
     if selected is not None:
         try:
             si, fi = map(int, selected.split(":"))
@@ -404,16 +424,9 @@ def pick_frame(error, selected=None):
         if not ((frame.get("file") and integer(frame.get("line")) > 0) or frame.get("fn")):
             raise ValueError("所选帧没有源码位置或函数符号，请重新使用 -g 编译")
         return frame
-    frames = error["stacks"][0]["frames"] if error["stacks"] else []
-    for frame in frames:
-        if frame.get("local_file") and integer(frame.get("line")) > 0:
-            return frame
-    for frame in frames:
-        if frame.get("file") and integer(frame.get("line")) > 0 and not frame["file"].startswith(("vg_", "m_")):
-            return frame
-    for frame in frames:
-        if frame.get("fn") and not frame["fn"].startswith(("vg", "_vgr")):
-            return frame
+    frames = ranked_debug_frames(error, project)
+    if frames:
+        return frames[0]
     raise ValueError("错误缺少可用源码位置或函数符号，请使用 -g -O0 重新编译；不复用旧进程绝对地址")
 
 
@@ -498,7 +511,7 @@ def run_debug(error, args):
         args.navigation_force = True
 
 
-def prepare_navigation(folder, errors, error, frame, auto_values):
+def prepare_navigation(folder, errors, error, frame, auto_values, *, project=None, selected=None):
     entries = []
     for order, item in enumerate(errors, 1):
         frames = {}
@@ -507,10 +520,14 @@ def prepare_navigation(folder, errors, error, frame, auto_values):
                 if candidate.get('fn') or (candidate.get('file') and integer(candidate.get('line')) > 0):
                     frames['%d:%d' % (si, fi)] = breakpoint_command(candidate)[6:]
         try:
-            default = breakpoint_command(frame if item['id'] == error['id'] and frame else pick_frame(item))[6:]
+            default = breakpoint_command(frame if item['id'] == error['id'] and frame else pick_frame(item, project=project))[6:]
         except ValueError:
             default = None
-        entries.append({'id': item['id'], 'order': order, 'frames': frames, 'default': default})
+        candidates = [default] if default else []
+        if item['id'] != error['id'] or selected is None:
+            candidates += [breakpoint_command(f)[6:] for f in ranked_debug_frames(item, project)]
+        entries.append({'id': item['id'], 'order': order, 'frames': frames, 'default': default,
+                        'candidates': list(dict.fromkeys(candidates))})
     restart = Path(folder) / 'restart.json'
     config = {'entries': entries, 'initial': error['id'], 'auto_values': auto_values, 'restart_file': str(restart)}
     script = Path(folder) / 'navigation.py'
@@ -526,7 +543,7 @@ def _run_debug(error, args, processes):
     if not auto_continue and not sys.stdin.isatty():
         raise ValueError("GDB 需要交互终端；请在终端中运行 debug 或 serve")
     try:
-        frame = pick_frame(error, args.frame)
+        frame = pick_frame(error, args.frame, project=args.project_dir)
     except ValueError:
         if not auto_values or args.frame is not None:
             raise
@@ -601,7 +618,7 @@ def _run_debug(error, args, processes):
             restart = None
             if navigation_enabled:
                 navigation, restart = prepare_navigation(folder, args.navigation_errors, error, frame,
-                    auto_values and not getattr(args, 'navigation_force', False))
+                    auto_values and not getattr(args, 'navigation_force', False), project=args.project_dir, selected=args.frame)
                 if not auto_values:
                     commands.remove(breakpoint_command(frame))
                 commands.insert(-1, "python exec(compile(open(" + repr(str(navigation)) + ", encoding='utf-8').read(), 'aivalgrind-navigation', 'exec'))")
