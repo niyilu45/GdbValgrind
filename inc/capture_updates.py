@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v19
+// aiv-stack-captures-v20
 (()=>{
  let running=true,timer,activeReplay=null;const captures=new Map();
  const status=document.getElementById('capture-status');
@@ -87,7 +87,7 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v19 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'旧现场：没有本行逐项检查记录；以下仅是旧值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v20 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'旧现场：没有本行逐项检查记录；以下仅是旧值的源码匹配，不代表已逐项检查')).className='meta';
    add('p','所属报告错误：'+e.id+' · 采集现场：'+(saved.captureId||'旧数据未提供现场文件名')).className='meta';
    if(e.records>1)add('p','本项合并了 '+e.records+' 条原始错误记录；以下仅来自上面标明的一次现场，不合并不同现场的变量值。').className='meta';
    add('p','现场来源：'+(frame.function||'未知函数')+' · '+(frame.file||'未知文件')+':'+(frame.line||'?')+' · GDB 帧 #'+(frame.index??'?')).className='meta';
@@ -111,7 +111,9 @@ SCRIPT = r'''
     if(!onLine(original.name))continue;
     const v={...original,initialization:{...original.initialization}};
     const members=v.member_details?.members||v.initialization.member_states?.filter(m=>m.name!=='$self');
-    const aggregate=!!members||/^\s*[\{\[]/.test(String(v.value||''));
+    // Scalars (including scalar struct fields) have a $self initialization
+    // entry. Filtering it produces [], which is truthy in JavaScript.
+    const aggregate=!!v.member_details||(members?.length||0)>0||/^\s*[\{\[]/.test(String(v.value||''));
     if(aggregate){
      const selected=(members||[]).filter(m=>onLine(v.name+(m.name.startsWith('[')?'':'.')+m.name,true));
      v.member_details={members:selected.map(m=>({...m,...(/^\s*[\{\[]/.test(String(m.value||''))?{value:'对象值未展开，避免混入未匹配的成员',initialization:'unknown'}:{initialization:m.initialization||(original.member_details?'unknown':m.status)}),status:original.member_details?m.status:'available'}))};
@@ -128,11 +130,11 @@ SCRIPT = r'''
     if(!onLine(v.name))continue;
     const details=v.member_details;
     const members=details?.members||v.initialization?.member_states?.filter(m=>m.name!=='$self');
-    if(members){
+    if(details||(members?.length||0)>0){
      let memberCount=0;
-     for(const m of members){const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;if(!onLine(name))continue;const state=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);const row=add('span',name+' = '+(m.value??'旧现场未单独保存成员值')+'；'+(initLabels[state]||'初始化状态无法确定'),relevant);row.style.display='block';colorState(row,variableState(state,details?m.status:undefined,v.initialization?.complete));memberCount++;relatedCount++}
-     if(!memberCount){add('span',v.name+'：本行出现此对象，但没有可对应的成员值，不展开其他成员。\n',relevant);relatedCount++}
-    }else{for(const row of variableLines(v)){const line=add('span',typeof row==='string'?row:row.text,relevant);line.style.display='block';if(row.state)colorState(line,row.state)}relatedCount++}
+     for(const m of members||[]){const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;if(!onLine(name))continue;const state=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);const row=add('span',(relatedCount+1)+'. '+name+' = '+(m.value??'旧现场未单独保存成员值')+'；'+(initLabels[state]||'初始化状态无法确定'),relevant);row.style.display='block';colorState(row,variableState(state,details?m.status:undefined,v.initialization?.complete));memberCount++;relatedCount++}
+     if(!memberCount){add('span',(relatedCount+1)+'. '+v.name+'：本行出现此对象，但没有可对应的成员值，不展开其他成员。\n',relevant);relatedCount++}
+    }else{let first=true;for(const row of variableLines(v)){const text=typeof row==='string'?row:row.text;const line=add('span',first?(relatedCount+1)+'. '+text.trimStart():text,relevant);first=false;line.style.display='block';if(row.state)colorState(line,row.state)}relatedCount++}
    }
    if(!relatedCount)relevant.textContent='未找到可与本行直接对应的已采集变量。宏、多行表达式、全局变量或缺少源码可能导致无法关联。';
    const legend=add('p','');legend.className='meta';

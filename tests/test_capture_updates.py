@@ -154,6 +154,16 @@ function lineSummary(source, variables, levels=[], identifiers=source, checked=n
  return frame.children[0].textContent;
 }
 const scalar=(name,value)=>({name,value,status:'available',initialization:{status:'undefined'}});
+// Real initialization results include $self for scalars and scalar members.
+const selfValue={name:'count',status:'available',value:'41',initialization:{status:'defined',complete:true,member_states:[{name:'$self',status:'defined'}]}};
+const fieldValue={name:'rxvec->abc',status:'available',value:'73',initialization:{status:'undefined',complete:true,member_states:[{name:'$self',status:'undefined'}]}};
+let actualLine=lineSummary('use(count, rxvec->abc);', [], [], 'use(count, rxvec->abc);', [selfValue,fieldValue]);
+assert(actualLine.includes('实际值：41'));assert(actualLine.includes('实际值：73'));
+assert(actualLine.includes('【正常】1. count'));assert(actualLine.includes('【异常】2. rxvec->abc'));
+assert(actualLine.includes('rxvec->abc：未初始化'));assert(!actualLine.includes('未采集到可直接对应'));
+assert(!actualLine.includes('初始化状态无法确定'));
+actualLine=lineSummary('return count;', [{...selfValue,initialization:{status:'defined',member_states:[]}}]);
+assert(actualLine.includes('实际值：41'));assert(actualLine.includes('1. count'));
 let lineText=lineSummary('return value;', [scalar('value','731')]);
 assert(lineText.includes('实际值：731'));assert(lineText.includes('value：未初始化'));
 lineText=lineSummary('int value = ptr -> length + ns::count;', [scalar('value','732'),scalar('length','WRONG_LENGTH'),scalar('count','WRONG_COUNT')]);
@@ -185,7 +195,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v19'));
+assert(lineText.includes('变量查看器 v20'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.
