@@ -108,7 +108,10 @@ def initialization_layout(value_type, limit, depth=0, members=None, prefix='', b
     if depth > 5 or size <= 0:
         return set(), False
     scalars = [getattr(gdb, name, None) for name in ('TYPE_CODE_INT', 'TYPE_CODE_BOOL', 'TYPE_CODE_ENUM', 'TYPE_CODE_PTR', 'TYPE_CODE_CHAR')]
-    if t.code in scalars:
+    # Ordinary 4/8-byte binary floats have no object padding on supported
+    # Linux targets. Do not extend this to padded long double storage.
+    ordinary_float = t.code == getattr(gdb, 'TYPE_CODE_FLT', -1) and size in (4, 8)
+    if t.code in scalars or ordinary_float:
         if members is not None:
             members.append({'name': prefix or '$self', 'byte_offsets': list(range(base, base + min(size, limit)))})
         return set(range(min(size, limit))), size <= limit
@@ -160,6 +163,8 @@ def check_initialization(value, budget):
         members = []
         used, complete = initialization_layout(value.type, length, members=members)
         if not used:
+            if value.type.strip_typedefs().code == getattr(gdb, 'TYPE_CODE_FLT', -1):
+                raise ValueError('该浮点类型占 %d 字节，尚不能区分有效数据与填充字节；初始化状态未知，不代表变量未初始化' % size)
             raise ValueError('无法确定有效成员布局（如联合体、位域或不支持的类型）')
         if budget['queries'] <= 0 or budget['bytes'] < length:
             raise ValueError('本次现场初始化检查预算已用完')

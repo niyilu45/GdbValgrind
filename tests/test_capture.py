@@ -487,6 +487,36 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(result['undefined_byte_offsets'], [2, 3])
         self.assertEqual(result['undefined_bits'], 9)
 
+    def test_float_double_and_typedef_initialization(self):
+        self.gdb.TYPE_CODE_FLT = 9
+        for size in (4, 8):
+            floating = self.value_type(9, size)
+            alias = SimpleNamespace(sizeof=size, strip_typedefs=lambda: floating)
+            self.assertEqual(self.inspect_init('00' * size, alias)['status'], 'defined')
+            self.assertEqual(self.inspect_init('ff' * size, alias)['status'], 'undefined')
+            partial = self.inspect_init('00' * (size - 1) + 'ff', alias)
+            self.assertEqual(partial['status'], 'partially_undefined')
+            self.assertEqual(partial['undefined_byte_offsets'], [size - 1])
+            self.assertEqual(partial['member_states'][0]['name'], '$self')
+        unknown = self.inspect_init('00' * 16, self.value_type(9, 16))
+        self.assertEqual(unknown['status'], 'unknown')
+        self.assertIn('填充字节', unknown['reason'])
+
+    def test_double_members_and_array_exclude_structure_padding(self):
+        self.gdb.TYPE_CODE_FLT = 9
+        double = self.value_type(9, 8)
+        fields = [SimpleNamespace(name='flag', bitpos=0, bitsize=0, type=self.value_type(5, 1)),
+                  SimpleNamespace(name='ratio', bitpos=64, bitsize=0, type=double)]
+        result = self.inspect_init('00' + 'ff' * 7 + '00' * 8, self.value_type(7, 16, fields=lambda: fields))
+        self.assertEqual(result['status'], 'defined')
+        self.assertEqual(result['ignored_padding_byte_offsets'], list(range(1, 8)))
+        self.assertEqual(result['member_states'][1]['name'], 'ratio')
+        array = self.value_type(6, 16, target=lambda: double, range=lambda: (0, 1))
+        result = self.inspect_init('00' * 8 + 'ff' * 8, array)
+        self.assertEqual(result['status'], 'partially_undefined')
+        self.assertEqual(result['member_states'][1]['status'], 'undefined')
+        self.assertEqual(result['undefined_byte_offsets'], list(range(8, 16)))
+
     def test_vbits_bad_or_missing_response_and_unaddressable(self):
         for output in ('', 'unsupported command', '00ff', 'Address 0x100 len 4 defined'):
             self.assertEqual(self.inspect_init(output)['status'], 'unknown')
