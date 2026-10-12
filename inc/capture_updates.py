@@ -2,22 +2,24 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v23
+// aiv-stack-captures-v27
 (()=>{
- let running=true,timer,activeReplay=null;const captures=new Map();
+ let running=true,timer,activeReplay=null,loadedRevision=null,probeRevision=null;const captures=new Map(),readableIds=new Set(),processed=new Map();
  const status=document.getElementById('capture-status');
+ const unmatchedDetails=document.createElement('details'),unmatchedTitle=document.createElement('summary'),unmatchedText=document.createElement('pre');
+ unmatchedTitle.textContent='未关联原因与候选错误（点击展开）';unmatchedText.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere';unmatchedDetails.append(unmatchedTitle,unmatchedText);status.before(unmatchedDetails);
  const normalize=s=>{const parts=[];for(const p of String(s||'').replace(/\\/g,'/').split('/')){if(p==='.')continue;if(p==='..'&&parts.length&&parts[parts.length-1]!=='..')parts.pop();else parts.push(p)}return parts.join('/')};
  const paths=f=>[f.local_file,f.file&&(/^(\/|[A-Za-z]:)/.test(f.file)?f.file:(f.dir?f.dir+'/':'')+f.file)].filter(Boolean).map(normalize);
- const index=new Map();for(const e of report.errors)for(const f of (e.stacks[0]?.frames||[]).slice(0,16))if(Number(f.line)>0)for(const p of paths(f)){const key=p+':'+Number(f.line);if(!index.has(key))index.set(key,new Set());index.get(key).add(e)}
+ const index=new Map();for(const e of report.errors){const frames=(e.stacks[0]?.frames||[]).slice(0,16),depth=frames.findIndex(f=>Number(f.line)>0&&paths(f).length);if(depth<0)continue;for(const p of paths(frames[depth])){const key=depth+':'+p+':'+Number(frames[depth].line);if(!index.has(key))index.set(key,new Set());index.get(key).add(e)}}
  const message=s=>String(s||'').replace(/0x[0-9a-f]+/gi,'<address>').replace(/\s+/g,' ').trim().toLowerCase();
  function sameFrame(f,r){
   const fn=s=>String(s||'').replace(/\s+/g,' ').trim().replace(/\([^()]*\)$/,'').trim();
   return !!r.file&&paths(f).includes(normalize(r.file))&&Number(f.line)>0&&Number(f.line)===Number(r.line)&&(!f.fn||!r.function||fn(f.fn)===fn(r.function));
  }
- function match(e,snapshot){
+ function match(e,snapshot,failures=[]){
   if(snapshot.association?.status!=='verified')return null;
   const diagnostic=String(snapshot.valgrind_error||'').split('\n').map(line=>message(line.replace(/==\d+==\s*/g,'')));
-  if(!e.what||!diagnostic.includes(message(e.what)))return null;
+  if(!e.what||!diagnostic.includes(message(e.what))){if(failures.length<8)failures.push(e.id+'：错误描述不同（报告：'+e.what+'）');return null}
   const frames=e.stacks[0]?.frames||[],runtime=snapshot.frames||[];
   if(!frames.length||!runtime.length)return null;
   // Align source frames, ignoring unsymbolized wrappers. Never use the replay seed ID.
@@ -28,7 +30,7 @@ SCRIPT = r'''
   const result=new Map();
   for(let j=0;j<source.length;j++){
    const actual=runtime[source[j].i];
-   if(!actual||!sameFrame(source[j].f,actual))return null;
+   if(!actual||!sameFrame(source[j].f,actual)){if(failures.length<8){const f=source[j].f;failures.push(e.id+'：帧 #'+source[j].i+' 不一致；报告 '+paths(f).join(' / ')+':'+f.line+' '+(f.fn||'')+'；现场 '+(actual?actual.file+':'+actual.line+' '+(actual.function||''):'缺少该帧'))}return null}
    result.set('0:'+source[j].i,actual);
   }
   return result;
@@ -47,10 +49,11 @@ SCRIPT = r'''
  }
  function variableLines(v){
   const info=v.initialization||{},details=v.member_details;
-  const lines=[];const overall=variableState(info.observed_status||info.status,v.status,info.complete);
+  const lines=[];const indexAbnormal=(v.index_accesses||[]).some(a=>a.bounds&&a.actual_index!==null&&(a.actual_index<a.bounds[0]||a.actual_index>a.bounds[1]));
+  const overall=indexAbnormal?'abnormal':variableState(info.observed_status||info.status,v.status,info.complete);
   lines.push({text:'\n'+v.name+(v.type?'（'+v.type+'）':'')+' · '+(v.role==='argument'?'函数参数':v.role==='source_expression'?'本行表达式逐项读取':'局部变量'),state:overall});
   if(v.macro_expansion)lines.push('当前源码位置的宏展开：'+v.macro_expansion);
-  for(const [index,access] of (v.index_accesses||[]).entries())lines.push('第 '+(index+1)+' 级索引：实际 '+access.actual_index+'；合法范围 '+(access.bounds?access.bounds.join('～'):'未知（没有可确认的数组边界）'));
+  for(const access of v.index_accesses||[])lines.push('访问 '+(access.expression||v.name)+'：下标 '+(access.index_expression||'名称未记录')+' = '+access.actual_index+'；'+(access.base_expression||'该数组')+' 的下标范围 '+(access.bounds?access.bounds.join('～')+'（元素索引）':'未知（没有可确认的数组边界）'));
   if(v.status&&v.status!=='available'){lines.push({text:'无法读取：'+v.value,state:'uncertain'});return lines}
   lines.push({text:'检查结果：'+(initLabels[info.status]||'未提供初始化检查结果'),state:overall});
   if(info.reason)lines.push('检查范围说明：'+info.reason);
@@ -88,7 +91,7 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v23 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v27 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
    for(const note of [frame.note,...(frame.inspection_errors||[]),!frame.source_line?.text&&frame.source_line?.note].filter(Boolean))add('p','采集说明：'+note).className='meta';
    if(directChecks){const rows=frame.line_checks.items,read=rows.filter(v=>v.status==='available').length,unknown=rows.filter(v=>['unknown','partial_check'].includes(v.initialization?.status||'unknown')).length;
     add('p','读取成功 '+read+' / '+rows.length+' 项；未读到 '+(rows.length-read)+' 项；初始化检查不完整或未知 '+unknown+' 项。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
@@ -101,14 +104,17 @@ SCRIPT = r'''
    const [si,fi]=node.dataset.frameKey.split(':').map(Number),recorded=e.stacks[si]?.frames[fi];
    const shownLine=recorded?.source?.find(row=>Number(row.number)===Number(recorded.line))?.text;
    const capturedLine=frame.source_line?.text;
-   const sourceChanged=typeof shownLine==='string'&&typeof capturedLine==='string'&&shownLine.trim()!==capturedLine.trim();
-   const identifiers=!sourceChanged&&typeof frame.source_line?.identifiers==='string'?frame.source_line.identifiers:'';
+   const header=frame.source_line?.control_header;
+   const headerValid=header&&Number(header.start_line)<=Number(frame.line)&&Number(header.end_line)>=Number(frame.line)&&header.lines?.some(r=>Number(r.number)===Number(frame.line)&&r.text===capturedLine);
+   const headerChanged=headerValid&&(recorded?.source||[]).some(r=>{const saved=header.lines.find(h=>Number(h.number)===Number(r.number));return saved&&saved.text.trim()!==r.text.trim()});
+   const sourceChanged=headerChanged||(typeof shownLine==='string'&&typeof capturedLine==='string'&&shownLine.trim()!==capturedLine.trim());
+   const identifiers=!sourceChanged?(headerValid?header.identifiers:frame.source_line?.identifiers)||'':'';
    // Preserve token boundaries: `return value` must not become `returnvalue`.
    // A member `ptr->value` is not the unrelated local variable `value`.
    const tokens=s=>String(s).match(/[A-Za-z_$][\w$]*|\d+|->|::|[^\s]/g)||[];
-   const sourceTokens=s=>tokens(s.replace(/\/\*.*?\*\/|\/\/.*$|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g,' '));
+   const sourceTokens=s=>tokens(s.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g,' '));
    const code=sourceTokens(identifiers);
-   const evidence=[code,...[capturedLine,shownLine].filter(s=>typeof s==='string').map(sourceTokens)];
+   const evidence=[code,...(headerValid?[header.text]:[capturedLine,shownLine]).filter(s=>typeof s==='string').map(sourceTokens)];
    // Require the name in both recorded association text and actual source.
    // Old/malformed metadata must never put a different line's locals here.
    const onLine=(name,leaf=false)=>{const needle=tokens(name);return needle.length>0&&evidence.every(parts=>parts.some((_,i)=>!['.','->','::'].includes(parts[i-1])&&needle.every((t,j)=>parts[i+j]===t)&&(!leaf||!['.','->','['].includes(parts[i+needle.length]))))};
@@ -130,17 +136,28 @@ SCRIPT = r'''
    }
    add('p',sourceChanged?'报告源码与步骤三采集时的源码行不同，本区域不展示变量值。':identifiers?'只显示当前源码行能对应的变量或具体成员；文本出现不证明实际读取或导致错误。':'此现场没有可核对的源码行，本区域不展示变量值。').className='meta';
    if(capturedLine)add('pre','采集时源码：'+capturedLine).style.cssText='white-space:pre-wrap;overflow-wrap:anywhere';
-   add('h4','本行源码中出现的变量');
+   if(headerValid){add('pre','采集时完整控制语句（第 '+header.start_line+'～'+header.end_line+' 行）：\n'+header.text).style.cssText='white-space:pre-wrap;overflow-wrap:anywhere';add('p',header.note||'读取当前帧变量，不执行控制语句。').className='meta'}
+   // Keep index-only findings in the same list, even when value reading failed.
+   const expressionKey=name=>tokens(name).join(' ');
+   for(const level of frame.index_analysis?.levels||[]){
+    if(level.status!=='out_of_bounds'||!onLine(level.expression))continue;
+    let variable=relatedVariables.find(v=>expressionKey(v.name)===expressionKey(level.expression));
+    if(!variable){variable={name:level.expression,role:'source_expression',status:'unavailable',value:'未采集到此表达式的值',initialization:{status:'out_of_bounds'}};relatedVariables.push(variable)}
+    variable.index_accesses=[...(variable.index_accesses||[])];
+    if(!variable.index_accesses.some(a=>expressionKey(a.expression||variable.name)===expressionKey(level.expression)))variable.index_accesses.push(level);
+   }
+   add('h4',headerValid?'当前控制语句变量分析（含异常核查）':'本行变量分析（含异常核查）');
    const relevant=add('pre','');relevant.className='source';relevant.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;padding:12px';let relatedCount=0;
    for(const v of relatedVariables){
     if(!onLine(v.name))continue;
+    const group=add('span','',relevant);group.dataset.variableGroup=v.name;group.style.cssText='display:block;padding:12px 0;border-bottom:1px solid var(--line);margin-bottom:8px';
     const details=v.member_details;
     const members=details?.members||v.initialization?.member_states?.filter(m=>m.name!=='$self');
     if(details||(members?.length||0)>0){
      let memberCount=0;
-     for(const m of members||[]){const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;if(!onLine(name))continue;const state=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);const row=add('span',(relatedCount+1)+'. '+name+' = '+(m.value??'旧现场未单独保存成员值')+'；'+(initLabels[state]||'初始化状态无法确定'),relevant);row.style.display='block';colorState(row,variableState(state,details?m.status:undefined,v.initialization?.complete));memberCount++;relatedCount++}
-     if(!memberCount){add('span',(relatedCount+1)+'. '+v.name+'：本行出现此对象，但没有可对应的成员值，不展开其他成员。\n',relevant);relatedCount++}
-    }else{let first=true;for(const row of variableLines(v)){const text=typeof row==='string'?row:row.text;const line=add('span',first?(relatedCount+1)+'. '+text.trimStart():text,relevant);first=false;line.style.display='block';if(row.state)colorState(line,row.state)}relatedCount++}
+     for(const m of members||[]){const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;if(!onLine(name))continue;const state=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);const row=add('span',(relatedCount+1)+'. '+name+' = '+(m.value??'旧现场未单独保存成员值')+'；'+(initLabels[state]||'初始化状态无法确定'),group);row.style.display='block';colorState(row,variableState(state,details?m.status:undefined,v.initialization?.complete));memberCount++;relatedCount++}
+     if(!memberCount){add('span',(relatedCount+1)+'. '+v.name+'：本行出现此对象，但没有可对应的成员值，不展开其他成员。\n',group);relatedCount++}
+    }else{let first=true;for(const row of variableLines(v)){const text=typeof row==='string'?row:row.text;const line=add('span',first?(relatedCount+1)+'. '+text.trimStart():text,group);first=false;line.style.display='block';if(row.state)colorState(line,row.state)}relatedCount++}
    }
    if(!relatedCount)relevant.textContent='未找到可与本行直接对应的已采集变量。宏、多行表达式、全局变量或缺少源码可能导致无法关联。';
    const legend=add('p','');legend.className='meta';
@@ -150,42 +167,24 @@ SCRIPT = r'''
    if(node.dataset.frameKey===saved.frames.keys().next().value){
     const memory=saved.snapshot.memory||{};
     if(memory.explanation)lines.push(memory.explanation);
-    lines.push(memory.range_explanation||'当前诊断未提供足够的内存块边界，无法确定合法访问范围。');
+    lines.push('本次访问的内存块参考（字节偏移，不是变量下标）');
+    lines.push(memory.range_evidence_version===2?memory.range_explanation:(memory.range_explanation&&memory.block_bytes!==undefined?'旧现场未保存地址与内存块的对应依据，不采用旧的范围计算；请重新执行步骤三。':memory.range_explanation||'当前诊断未提供足够的内存块边界，无法确定合法访问范围。'));
+    if(memory.range_evidence)lines.push('范围依据：'+memory.range_evidence);
    }
    if(lines.length)add('p',lines.join('\n')).style.whiteSpace='pre-wrap';
-   add('h4','本行需要核查的异常变量');
-   const warnings=[];
-   const suspicious=s=>['undefined','partially_undefined','unaddressable','out_of_bounds'].includes(s);
-   for(const v of relatedVariables){
-    const info=v.initialization||{},details=v.member_details;
-    const members=details?.members||info.member_states?.filter(m=>m.name!=='$self')||[];
-    let found=false;
-    for(const m of members){
-     const state=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);
-     if(!suspicious(state))continue;
-     const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;
-     if(onLine(name))warnings.push(name+'：'+initLabels[state]);found=true;
-    }
-    if(!members.length&&!found&&onLine(v.name)&&suspicious(info.observed_status||info.status))warnings.push(v.name+'：'+(initLabels[info.observed_status||info.status]||'需要检查'));
-   }
-   for(const level of frame.index_analysis?.levels||[])if(level.status==='out_of_bounds'&&onLine(level.expression))warnings.push(level.expression+'：索引越界，实际 '+level.actual_index+'；合法范围 '+(level.bounds?level.bounds.join('～'):'未知'));
-   if(warnings.length){
-    const ul=add('ul','');for(const warning of [...new Set(warnings)])colorState(add('li',warning,ul),'abnormal');
-    add('p','以上是需核查的现场异常，不代表已确认的错误原因。请结合报错行检查赋值与访问过程。').className='meta';
-   }else colorState(add('p','本帧尚未定位到具体异常变量；不表示全部变量正常。可展开下方信息核查。'),'uncertain');
    const all=add('details','');all.dataset.captureAllVariables='yes';
    add('summary','本行变量明细（不包含其他局部变量或未匹配的成员）',all);
-   const values=[];for(const v of relatedVariables)values.push(...variableLines(v));
+   const values=[];for(const v of relatedVariables)values.push({separator:true,name:v.name},...variableLines(v));
    if(!values.length)values.push('没有可与当前源码行对应的变量。原始采集数据保留在 captures 目录。');
    const valueBlock=add('pre','',all);valueBlock.className='source';valueBlock.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;padding:12px';
-   for(const row of values){const line=add('span',typeof row==='string'?row:row.text,valueBlock);line.style.display='block';if(row.state)colorState(line,row.state)}
+   for(const row of values){if(row.separator){const divider=add('span','',valueBlock);divider.dataset.variableSeparator=row.name;divider.style.cssText='display:block;border-top:1px solid var(--line);margin:16px 0 12px';continue}const line=add('span',typeof row==='string'?row:row.text,valueBlock);line.style.display='block';if(row.state)colorState(line,row.state)}
    const analysis=[];
    if(frame.index_analysis?.levels?.length){
     analysis.push('嵌套索引逐级分析（源码现场推导）');
     for(const level of frame.index_analysis.levels){
      if(!onLine(level.expression))continue;
      const bounds=level.bounds?level.bounds.join('～'):'未知';
-     analysis.push({text:level.expression+'：实际索引 '+(level.actual_index??'未知')+'；合法范围 '+bounds+'；'+({in_bounds:'该级未越界',out_of_bounds:'该级越界',unknown:'无法判断'}[level.status]||level.status)+(level.note?'（'+level.note+'）':''),state:variableState(level.status)});
+     analysis.push({text:level.expression+'：下标 '+(level.index_expression||'名称未记录')+' = '+(level.actual_index??'未知')+'；数组下标范围 '+bounds+'；'+({in_bounds:'该下标在范围内',out_of_bounds:'该下标越界',unknown:'无法判断'}[level.status]||level.status)+(level.note?'（'+level.note+'）':''),state:variableState(level.status)});
     }
     analysis.push(frame.index_analysis.note);
    }
@@ -193,7 +192,8 @@ SCRIPT = r'''
   }
  }
  const originalDetail=detail;detail=function(e){originalDetail(e);paint(e)};
- function hasVariables(id){const saved=captures.get(id);return !!saved&&[...saved.frames.values()].some(f=>(f.line_checks?.version===1?f.line_checks.items:f.variables||[]).some(v=>v.status==='available'||(!v.status&&v.value!==undefined&&v.value!==null)))}
+ function entryHasVariables(saved){return [...saved.frames.values()].some(f=>(f.line_checks?.version===1?f.line_checks.items:f.variables||[]).some(v=>v.status==='available'||(!v.status&&v.value!==undefined&&v.value!==null)))}
+ function hasVariables(id){return readableIds.has(id)}
  const filter=document.createElement('input');filter.type='checkbox';filter.id='captureVariableFilter';filter.style.width='auto';
  if(typeof savedFilters!=='undefined')filter.checked=!!savedFilters.variables;
  const label=document.createElement('label');label.htmlFor=filter.id;label.append(filter,document.createTextNode('仅显示已读出变量值的错误'));
@@ -217,38 +217,52 @@ SCRIPT = r'''
   if(data.report_key&&data.report_key!=='__CAPTURE_REPORT_KEY__'){
    running=false;status.textContent='变量数据属于另一份步骤二报告，已停止关联。请重新打开本次生成的 full-report.html。';return;
   }
-  let unmatched=0,missing=0,ambiguous=0,unverified=0,changed=false;
+  let unmatched=0,missing=0,ambiguous=0,unverified=0,changed=false;const diagnostics=[];
+  const tally=result=>{unmatched+=result.unmatched||0;missing+=result.missing||0;ambiguous+=result.ambiguous||0;unverified+=result.unverified||0;if(result.note&&diagnostics.length<30)diagnostics.push(result.note)};
   if(data.replay_id&&data.replay_id!==activeReplay){
-   activeReplay=data.replay_id;captures.clear();changed=true;
+   activeReplay=data.replay_id;captures.clear();readableIds.clear();processed.clear();changed=true;
    for(const frame of document.getElementById('detail').children)for(const child of [...frame.children])if(child.dataset?.captureVariables==='yes')child.remove();
    for(const node of document.getElementById('list').children)for(const child of [...node.children])if(child.dataset?.captureBadge==='yes')child.remove();
   }
   for(const item of data.items){
-   const snapshot=item.snapshot;if(!snapshot){unmatched++;missing++;continue}
-   if(snapshot.association?.status!=='verified'){unmatched++;unverified++;continue}
-   const candidates=new Set();for(const r of snapshot.frames||[])for(const e of index.get(normalize(r.file)+':'+Number(r.line))||[])candidates.add(e);
-   const matches=[];for(const e of candidates){const frames=match(e,snapshot);if(frames)matches.push({e,frames})}
-   if(matches.length!==1){unmatched++;if(matches.length>1)ambiguous++;continue}
+   const cached=item.id&&item.revision&&processed.get(item.id);if(cached&&cached.revision===item.revision){tally(cached.result);continue}
+   const finish=result=>{tally(result);if(item.id&&item.revision)processed.set(item.id,{revision:item.revision,result})};
+   const snapshot=item.snapshot;if(!snapshot){finish({unmatched:1,missing:1,note:(item.id||'现场')+'：缺少现场数据'});continue}
+   if(snapshot.association?.status!=='verified'){finish({unmatched:1,unverified:1,note:(item.id||'现场')+'：停止位置未核实；'+(snapshot.association?.note||'缺少校验信息')});continue}
+   const candidates=new Set();for(const [depth,r] of (snapshot.frames||[]).entries())for(const e of index.get(depth+':'+normalize(r.file)+':'+Number(r.line))||[])candidates.add(e);
+   const matches=[],failures=[];for(const e of candidates){const frames=match(e,snapshot,failures);if(frames)matches.push({e,frames})}
+   if(matches.length!==1){finish({unmatched:1,ambiguous:matches.length>1?1:0,note:(item.id||'现场')+'：'+(matches.length>1?'多个候选 '+matches.slice(0,8).map(m=>m.e.id).join('、')+'；主错误栈无法唯一识别，不自动填入':failures.join('；')||'主错误栈首个有源码的帧未命中；检查源码路径、行号及帧层级')});continue}
    const {e,frames}=matches[0];const previous=captures.get(e.id);
    const readable=entry=>{const first=[...entry.frames.values()].find(f=>f.line_checks?.items?.length);const rows=first?first.line_checks.items:[...entry.frames.values()].flatMap(f=>f.variables||[]);return rows.some(v=>v.status==='available')};
    const candidate={snapshot,frames,captureId:item.id};
-   if(!previous||(!readable(previous)&&readable(candidate))){candidate.replacedEmpty=!!previous;captures.set(e.id,candidate);changed=true}
+   if(!previous||(!readable(previous)&&readable(candidate))){candidate.replacedEmpty=!!previous;captures.set(e.id,candidate);if(entryHasVariables(candidate))readableIds.add(e.id);else readableIds.delete(e.id);changed=true}
+   finish({});
   }
   const current=report.errors.find(e=>e.id===selected);if(current)paint(current);
   if(changed&&filter.checked)list();else markNavigation();
   running=data.live;
+  loadedRevision=data.update_revision||null;
   status.textContent=(running?'采集中':'采集已结束')+' · 已关联 '+captures.size+' 个错误，其中 '+[...captures.keys()].filter(hasVariables).length+' 个已读出变量；'+unmatched+' 个现场未能唯一匹配（缺少现场数据 '+missing+'，停止位置未核实 '+unverified+'，多个候选 '+ambiguous+'，位置或错误描述不匹配 '+(unmatched-missing-ambiguous-unverified)+'）。原始现场保留在 captures 目录。'+(unverified?' 旧现场或未核实现场不会填入堆栈，请重新执行步骤三。':'');
   const kinds=new Map();for(const e of report.errors){if(!kinds.has(e.kind))kinds.set(e.kind,{total:0,read:0,empty:0});const group=kinds.get(e.kind);group.total++;if(hasVariables(e.id))group.read++;else if(captures.has(e.id))group.empty++}
   status.style.whiteSpace='pre-line';
   for(const [kind,g] of kinds)status.textContent+='\n'+kind+'：已读值 '+g.read+'/'+g.total+'，已关联但无可展示值 '+g.empty+'，尚未关联 '+(g.total-g.read-g.empty)+'。';
   status.textContent+='\n尚未关联不等于没有变量：可能未重现、停止位置未核实或堆栈/描述不匹配，不能仅凭报告推断原因。';
   if([...kinds.keys()].some(k=>k.startsWith('Leak_')))status.textContent+='\n泄漏/仍可访问记录保存的是历史分配栈；检测泄漏时该调用可能已经返回，不能把退出现场的变量当成分配时的值。';
+  unmatchedDetails.hidden=!diagnostics.length;const diagnosticText='未关联依据（最多展示 30 个现场）：\n'+diagnostics.join('\n');if(unmatchedText.textContent!==diagnosticText)unmatchedText.textContent=diagnosticText;
  };
+ window.aivCaptureCheck=data=>{probeRevision=data.revision};
+ function loadUpdateScript(name,done){
+  const script=document.createElement('script');script.src=name+'?t='+Date.now();let finished=false;
+  const finish=ok=>{if(finished)return;finished=true;clearTimeout(deadline);script.remove();done(ok)};
+  const deadline=setTimeout(()=>finish(false),10000);script.onload=()=>finish(true);script.onerror=()=>finish(false);document.head.append(script);
+ }
  function poll(){
-  if(!running)return;
-  const script=document.createElement('script');script.src='capture-updates.js?t='+Date.now();
-  let finished=false;const finish=()=>{if(finished)return;finished=true;clearTimeout(timer);script.remove();if(running)timer=setTimeout(poll,2000)};
-  script.onload=finish;script.onerror=()=>{status.textContent='无法加载 capture-updates.js，请将它与 full-report.html 放在同一目录。正在重试…';finish()};timer=setTimeout(finish,10000);document.head.append(script);
+  if(!running)return;probeRevision=null;
+  const next=()=>{if(running)timer=setTimeout(poll,2000)};
+  loadUpdateScript('capture-progress.js',ok=>{
+   if(ok&&probeRevision&&probeRevision===loadedRevision){next();return}
+   loadUpdateScript('capture-updates.js',loaded=>{if(!loaded)status.textContent='无法加载 capture-updates.js，请将它与 full-report.html 放在同一目录。正在重试…';next()});
+  });
  }
  poll();
 })();

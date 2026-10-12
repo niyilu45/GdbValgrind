@@ -33,6 +33,10 @@ class WorkflowTests(unittest.TestCase):
             sidecar=(directory/'capture-updates.js').read_text(encoding='utf-8')
             self.assertIn(workflow.report_key(html('new')),sidecar)
             self.assertIn('second',sidecar)
+            payload=json.loads(sidecar[len('window.aivCaptureUpdate('):-2])
+            progress=(directory/'capture-progress.js').read_text(encoding='utf-8')
+            self.assertIn(payload['update_revision'],progress)
+            self.assertLess(len(progress),200)
             before=(directory/'full-report.html').stat().st_mtime_ns
             workflow.save_combined_report({},directory,base_html=html('new'),replay_id='second')
             self.assertEqual((directory/'full-report.html').stat().st_mtime_ns,before)
@@ -69,7 +73,7 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual(main(['refresh-captures', '--output-dir', root]), 0)
                 debug.assert_not_called()
             html = (directory/'full-report.html').read_text(encoding='utf-8')
-            self.assertIn('aiv-stack-captures-v23', html)
+            self.assertIn('aiv-stack-captures-v27', html)
             self.assertNotIn('aiv-stack-captures-v4', html)
             self.assertIn('<p>source</p>', html)
             self.assertEqual(html.count('id="capture-results"'), 1)
@@ -108,8 +112,15 @@ class WorkflowTests(unittest.TestCase):
                       'base_args': ['--cwd', '/srv', '--stdin-file', '/srv/input']}
             (Path(root) / 'demo.c').write_text('int marker;\n' * 30, encoding='utf-8')
             if step3:
+                report['project'] = root
+                report['errors'][0]['stacks'][0]['frames'][0]['local_file'] = str(Path(root)/'demo.c')
                 (Path(root) / 'report.html').write_text(workflow.core.render_html(report).replace('</body>', '<p>int marker;</p></body>'), encoding='utf-8')
+                report['project'] = ''
+                report['errors'][0]['stacks'][0]['frames'][0].pop('local_file')
             def debug(*args):
+                if step3:
+                    self.assertEqual(args[0]['project'], str(Path(root).resolve()))
+                    self.assertEqual(args[0]['errors'][0]['stacks'][0]['frames'][0]['local_file'], str(Path(root)/'demo.c'))
                 if step3 and not same_dir:
                     self.assertFalse((output / 'report.html').exists())
                 else:

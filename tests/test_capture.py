@@ -13,6 +13,31 @@ from inc import cli
 
 
 class CaptureTests(unittest.TestCase):
+    def test_multiline_control_header_excludes_body_and_comments(self):
+        source = self.root/'controls.c'
+        source.write_text('for (int i = 0;\n i < options->limit; /* ignored_name */\n ++i) {\n use(body_only);\n}\nswitch (\n options\n ->mode) {\n case 1: use(case_only);\n}\n', encoding='utf-8')
+        read = self.scope['capture_source_line']
+        header = read(str(source),2)['control_header']
+        self.assertEqual((header['start_line'], header['end_line']), (1,3))
+        self.assertIn('options->limit', header['identifiers'])
+        self.assertNotIn('ignored_name', header['identifiers'])
+        self.assertNotIn('body_only', header['identifiers'])
+        self.assertNotIn('control_header', read(str(source),4))
+        self.assertEqual(read(str(source),7)['control_header']['start_line'],6)
+        self.assertNotIn('control_header', read(str(source),9))
+
+    def test_source_path_mapping_reads_exact_file_without_basename_guess(self):
+        source = self.root / 'mapped.c'
+        source.write_text('return mapped_value;\n', encoding='utf-8')
+        errors = [{'stacks':[{'frames':[{'dir':'/old/build','file':'mapped.c','local_file':str(source)}]}]}]
+        _, script = av.prepare_capture(self.root/'mapping', 'id', source_errors=errors)
+        config = {}
+        exec(script.read_text(encoding='utf-8').splitlines()[0], config)
+        self.scope['_capture_config'].update(config['_capture_config'])
+        read = self.scope['capture_source_line']
+        self.assertEqual(read('/old/build/mapped.c', 1)['text'], 'return mapped_value;')
+        self.assertNotIn('text', read('/another/build/mapped.c', 1))
+
     def test_expression_failure_does_not_skip_scope_variables(self):
         def fail(*args):
             raise RuntimeError('failed source inspection')
@@ -177,6 +202,13 @@ class CaptureTests(unittest.TestCase):
         unknown=facts('Invalid write of size 8\nAddress 0x0 is not stack\'d, malloc\'d or free\'d')
         self.assertIn('合法范围未知',unknown['range_explanation'])
         self.assertIn('0x0',unknown['range_explanation'])
+        unrelated=facts('Invalid write of size 1\nAddress 0x0 is not stack\'d\nAddress 0x300 is 0 bytes inside a block of size 288 alloc\'d')
+        self.assertNotIn('block_bytes', unrelated)
+        self.assertNotIn('287', unrelated['range_explanation'])
+        evidence=facts('Invalid write of size 1\nAddress 0x300 is 0 bytes after a block of size 288 alloc\'d')
+        self.assertEqual(evidence['range_evidence_version'], 2)
+        self.assertIn('尚未确认对应哪个变量', evidence['range_explanation'])
+        self.assertIn('Address 0x300', evidence['range_evidence'])
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

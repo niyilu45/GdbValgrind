@@ -36,11 +36,14 @@ def memory_facts(message):
     address = re.search(r'Address\s+(0x[0-9a-f]+)', message, re.I)
     if address:
         facts['address'] = address.group(1)
-    block = re.search(r'([\d,]+) bytes (after|before|inside) a block of size ([\d,]+)\s+(alloc\S*|free\S*)', message, re.I)
+    # An auxiliary address must not supply a block size for the fault address.
+    address_line = message[address.start():].split('\n', 1)[0] if address else ''
+    block = re.search(r'([\d,]+) bytes (after|before|inside) a block of size ([\d,]+)\s+(alloc\S*|free\S*)', address_line, re.I)
     if block:
         distance, relation, size, state = block.groups()
         facts.update(distance_bytes=int(distance.replace(',', '')), relation=relation.lower(),
                      block_bytes=int(size.replace(',', '')), block_state=state.lower())
+        facts.update(range_evidence_version=2, range_evidence=address_line.strip())
         if state.lower().startswith('free'):
             facts['explanation'] = '访问地址对应已释放的内存块；请检查释放栈和访问栈。'
         elif relation.lower() == 'after':
@@ -58,13 +61,13 @@ def memory_facts(message):
             facts['valid_start_offset_bytes'] = [0, length-width] if not freed and width>0 and width<=length else None
             valid = facts['valid_start_offset_bytes']
             allowed = ('0 到 %d 字节' % valid[1]) if valid else '无（内存已释放或访问宽度超过块大小）'
-            facts['range_explanation'] = '相对内存块起点：本次访问 %d 字节，合法起始偏移为 %s；实际起始偏移 %d，覆盖偏移 %d 到 %d。此范围是内存块边界，不代表变量的业务取值范围或数组下标。' % (width,allowed,offset,offset,offset+width-1)
+            facts['range_explanation'] = '诊断提及的内存块大小 %d 字节；本次访问 %d 字节。仅按该块边界计算，可容纳访问的起始偏移为 %s；实际起始偏移 %d 字节，覆盖偏移 %d 到 %d 字节。该块可能只是报错地址附近的分配块，尚未确认对应哪个变量；此范围不是数组下标，也不证明访问合法。' % (length,width,allowed,offset,offset,offset+width-1)
             if facts.get('address'):
                 start = int(facts['address'], 16) - offset
                 facts['block_start_address'] = hex(start)
                 if valid:
                     facts['valid_start_addresses'] = [hex(start), hex(start+valid[1])]
-                    facts['range_explanation'] += ' 合法起始地址：%s～%s；实际起始地址：%s。' % (*facts['valid_start_addresses'], facts['address'])
+                    facts['range_explanation'] += ' 该块内可容纳访问的起始地址：%s～%s；实际访问地址：%s。' % (*facts['valid_start_addresses'], facts['address'])
     if access and 'range_explanation' not in facts:
         facts['range_explanation'] = '实际访问地址：%s；访问宽度：%s 字节。诊断未提供可确认的存活内存块边界，合法范围未知；非法访问也可能来自悬空指针或无效地址，不能一律推断为数组越界。' % (facts.get('address', '未提供'), facts['access_bytes'])
     return facts
@@ -205,9 +208,32 @@ def initialization_summary(info):
         label += '；' + info['reason']
     return label
 
+def capture_control_header(clean_lines, original_lines, line):
+    # Only expand a for/switch header containing the stopped line, never its body.
+    first = max(0, line - 41)
+    window = '\n'.join(clean_lines[first:line + 40])
+    for match in re.finditer(r'\b(?:for|switch)\s*\(', window):
+        depth, end = 1, match.end()
+        while end < len(window) and end - match.start() < 4096 and depth:
+            depth += (window[end] == '(') - (window[end] == ')')
+            end += 1
+        if depth:
+            continue
+        start_line = first + window.count('\n', 0, match.start()) + 1
+        end_line = first + window.count('\n', 0, end) + 1
+        if start_line <= line <= end_line and start_line < end_line:
+            rows = [{'number': n, 'text': original_lines[n-1][:4096]} for n in range(start_line, end_line+1)]
+            return {'start_line': start_line, 'end_line': end_line, 'lines': rows,
+                    'text': '\n'.join(row['text'] for row in rows),
+                    'identifiers': window[match.start():end],
+                    'note': '控制语句跨行，只读取当前帧的变量值，不执行初始化、递增、赋值或函数调用；值不代表每次循环的历史状态'}
+    return None
+
 def capture_source_line(filename, line):
     # Bounded source-only inspection; never evaluate expressions in the target.
     try:
+        if not Path(filename).is_file():
+            filename = _capture_config.get('source_paths', {}).get(str(filename).replace('\\', '/'), filename)
         with open(filename, 'r', encoding='utf-8', errors='replace') as source:
             text = source.read(1024 * 1024)
         lines = text.splitlines()
@@ -216,8 +242,13 @@ def capture_source_line(filename, line):
         # Preserve line numbers while excluding comments and quoted literals.
         clean = re.sub(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'',
                        lambda m: '\n' * m.group().count('\n') or ' ', text, flags=re.S)
-        return {'text': lines[line - 1][:4096], 'identifiers': clean.split('\n')[line - 1][:4096],
-                'note': '源码文本关联，不代表该表达式已执行；宏、多行表达式和指针成员可能无法关联'}
+        clean_lines = clean.split('\n')
+        result = {'text': lines[line - 1][:4096], 'identifiers': clean_lines[line - 1][:4096],
+                  'note': '源码文本关联，不代表该表达式已执行；宏、多行表达式和指针成员可能无法关联'}
+        header = capture_control_header(clean_lines, lines, line)
+        if header:
+            result['control_header'] = header
+        return result
     except (OSError, ValueError, IndexError) as exc:
         return {'note': '无法读取现场源码：' + str(exc)}
 

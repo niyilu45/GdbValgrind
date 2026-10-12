@@ -28,6 +28,29 @@ class Value:
 
 
 class LineCheckTests(unittest.TestCase):
+    def test_for_and_switch_read_values_without_executing_updates(self):
+        options=Value(Value({'limit':Value(8),'mode':Value(3)},code=6),code=5)
+        values={'i':Value(2),'options':options}
+        rows=self.run_line('for (int i=0; i < options->limit; ++i) {', values)
+        self.assertEqual([(r['name'],r['value']) for r in rows],[('i','2'),('options->limit','8')])
+        self.assertEqual(int(values['i']),2)
+        rows=self.run_line('switch (options->mode) {', values)
+        self.assertEqual([(r['name'],r['value']) for r in rows],[('options->mode','3')])
+        frame=SimpleNamespace(read_var=lambda name:values[name])
+        result=self.scope['check_source_expressions'](frame,{'identifiers':'switch (','control_header':{'identifiers':'switch (\n options\n ->mode)'}},{})
+        self.assertEqual(result['items'][0]['value'],'3')
+
+    def test_nested_indices_have_distinct_expression_and_index_names(self):
+        matrix=Value([Value([Value(1),Value(9)],code=8)],code=8)
+        options=Value(Value({'row':Value(0),'col':Value(1)},code=6),code=5)
+        item=self.run_line('return matrix[options->row][options->col];',{'matrix':matrix,'options':options})[0]
+        self.assertEqual(item['value'],'9')
+        accesses=item['index_accesses']
+        self.assertEqual([a['index_expression'] for a in accesses],['options->row','options->col'])
+        self.assertEqual([a['base_expression'] for a in accesses],['matrix','matrix[options->row]'])
+        self.assertEqual([a['bounds'] for a in accesses],[[0,0],[0,1]])
+        self.assertEqual(accesses[0]['expression'],'matrix[options->row]')
+
     def test_post_read_check_failure_keeps_actual_value(self):
         def fail(*args):
             raise RuntimeError('initialization query failed')

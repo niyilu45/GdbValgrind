@@ -28,7 +28,7 @@ global.report={errors:[{id:'one',kind:'InvalidWrite',what:'Invalid write of size
 const issueList=new Element(),navigation=new Element(),issue=new Element();issue.dataset.errorId='one';issueList.append(issue);navigation.append(new Element(),new Element());
 global.savedFilters={variables:true};global.selected='one';global.detail=()=>{};global.nav=()=>{for(const node of navigation.children)node.textContent=matchingRows().length+'/'+report.errors.length};global.list=()=>nav();let filtered=true;global.matchingRows=()=>filtered?report.errors.map(e=>({e})):[];
 global.window={};global.document={head:new Element(),getElementById:id=>id==='detail'?area:id==='list'?issueList:id==='nav'?navigation:status,createElement:()=>new Element(),createTextNode:text=>text};
-global.setTimeout=()=>1;global.clearTimeout=()=>{};
+global.scheduled=[];global.setTimeout=(fn,ms)=>{scheduled.push({fn,ms});return scheduled.length};global.clearTimeout=()=>{};
 '''
         checks = r'''
 const snapshot={association:{status:'verified'},requested_error_id:'wrong',valgrind_error:'Invalid write of size 4',frames:[{file:'/src/a.c',line:10,function:'main',source_line:{text:'use(x);',identifiers:'use(x);'},variables:[{name:'x',value:'42'}]}]};
@@ -54,6 +54,20 @@ frame.ontoggle();assert.strictEqual(frame.children[0],source);assert.strictEqual
 frame.open=false;frame.ontoggle();frame.open=true;frame.ontoggle();
 assert.strictEqual(frame.children.length,2);assert.strictEqual(frame.lastElementChild,panel);assert(all.open);
 window.aivCaptureUpdate({live:false,items:[{snapshot}]});assert.strictEqual(frame.lastElementChild,panel);
+// Repeated filters and an unchanged sidecar must not rescan saved frame values.
+window.aivCaptureUpdate({live:true,items:[{id:'cached',revision:'r1',snapshot}]});
+const originalFrames=snapshot.frames;let frameReads=0;
+Object.defineProperty(snapshot,'frames',{get(){frameReads++;return originalFrames}});
+for(let i=0;i<20;i++){checkbox.checked=!checkbox.checked;checkbox.onchange();window.aivCaptureUpdate({live:true,items:[{id:'cached',revision:'r1',snapshot}]})}
+assert.strictEqual(frameReads,0);
+window.aivCaptureUpdate({live:true,items:[{id:'cached',revision:'r2',snapshot}]});assert(frameReads>0);
+window.aivCaptureUpdate({live:true,update_revision:'stable',items:[{id:'cached',revision:'r2',snapshot}]});
+const probe=document.head.children.find(n=>n.src?.startsWith('capture-progress.js'));
+window.aivCaptureCheck({revision:'stable'});probe.onload();
+assert(!document.head.children.some(n=>n.src?.startsWith('capture-updates.js')));
+scheduled.filter(t=>t.ms===2000).at(-1).fn();
+const nextProbe=document.head.children.at(-1);window.aivCaptureCheck({revision:'changed'});nextProbe.onload();
+assert(document.head.children.at(-1).src.startsWith('capture-updates.js'));
 '''
         script = SCRIPT.replace('<script>', '').replace('</script>', '')
         result = subprocess.run(['node','-e',setup+script+checks], capture_output=True, text=True, encoding='utf-8')
@@ -103,6 +117,7 @@ const checkbox=nodes.resetFilters.previous.children[0];checkbox.checked=true;
 assert.deepStrictEqual(matchingRows().map(row=>row.e.id),['one']);
 assert(nodes['capture-status'].textContent.includes('已关联 2 个错误'));
 assert(nodes['capture-status'].textContent.includes('多个候选 1'));
+assert(nodes['capture-status'].previous.textContent.includes('amb1、amb2'));
 nodes.resetFilters.onclick();assert.strictEqual(checkbox.checked,false);
 assert.strictEqual(matchingRows().length,5);
 report.errors.push(error('structure','struct.c'));
@@ -146,15 +161,18 @@ assert(!parentFrame.textContent.includes('parentB'));
 selected='bad';frame.children=[];parentFrame.children=[];detail(report.errors[1]);
 assert(frame.textContent.includes('session-B/error-1'));assert(parentFrame.textContent.includes('parentB'));
 // Keywords/whitespace must not hide locals; members must not impersonate locals.
-function lineSummary(source, variables, levels=[], identifiers=source, checked=null){
+function lineSummary(source, variables, levels=[], identifiers=source, checked=null, memory={},header=null){
  const sample=runtime('bad.c');sample.frames[1].source_line={text:source,identifiers};
- sample.frames[1].variables=variables;sample.frames[1].index_analysis={levels};
+ sample.frames[1].variables=variables;sample.frames[1].index_analysis={levels};sample.memory=memory;if(header)sample.frames[1].source_line.control_header=header;
  if(checked)sample.frames[1].line_checks={version:1,items:checked};
  frame.children=[];parentFrame.children=[];
  window.aivCaptureUpdate({live:false,replay_id:source,items:[{snapshot:sample}]});
  return frame.children[0].textContent;
 }
 const scalar=(name,value)=>({name,value,status:'available',initialization:{status:'undefined'}});
+const header={start_line:9,end_line:11,text:'for (int i=0;\n i < limit;\n ++i)',identifiers:'for (int i=0;\n i < limit;\n ++i)',lines:[{number:9,text:'for (int i=0;'},{number:10,text:' i < limit;'},{number:11,text:' ++i)'}]};
+const headerText=lineSummary('for (int i=0;',[],[],'for (int i=0;',[scalar('i','2'),scalar('limit','8'),scalar('body_only','WRONG_BODY')],{}, {...header,start_line:10,end_line:12,lines:header.lines.map(r=>({...r,number:r.number+1}))});
+assert(headerText.includes('当前控制语句变量分析'));assert(headerText.includes('实际值：2'));assert(headerText.includes('实际值：8'));assert(!headerText.includes('WRONG_BODY'));
 report.errors[1].kind='InvalidWrite';
 // Real initialization results include $self for scalars and scalar members.
 const selfValue={name:'count',status:'available',value:'41',initialization:{status:'defined',complete:true,member_states:[{name:'$self',status:'defined'}]}};
@@ -162,16 +180,27 @@ const fieldValue={name:'rxvec->abc',status:'available',value:'73',initialization
 let actualLine=lineSummary('use(count, rxvec->abc);', [], [], 'use(count, rxvec->abc);', [selfValue,fieldValue]);
 assert(actualLine.includes('实际值：41'));assert(actualLine.includes('实际值：73'));
 assert(actualLine.includes('【已检查部分通过】1. count'));assert(actualLine.includes('【异常】2. rxvec->abc'));
-assert(actualLine.includes('rxvec->abc：未初始化'));assert(!actualLine.includes('未采集到可直接对应'));
+assert(actualLine.includes('检查结果：未初始化'));assert(!actualLine.includes('未采集到可直接对应'));
+assert(actualLine.includes('本行变量分析（含异常核查）'));
+assert(!actualLine.includes('本行需要核查的异常变量'));
 assert(!actualLine.includes('初始化状态无法确定'));
 assert(actualLine.includes('Valgrind 已确认本次写入非法'));
 assert(!actualLine.includes('【正常】'));
-actualLine=lineSummary('use(data[options.index]);', [], [], 'use(data[options.index]);', [{name:'data[options.index]',status:'unavailable',value:'boundary unknown',initialization:{status:'unknown'},index_accesses:[{actual_index:7,bounds:null}]}]);
-assert(actualLine.includes('实际 7；合法范围 未知'));
+actualLine=lineSummary('use(data[options.index]);', [], [], 'use(data[options.index]);', [{name:'data[options.index]',status:'unavailable',value:'boundary unknown',initialization:{status:'unknown'},index_accesses:[{expression:'data[options.index]',base_expression:'data',index_expression:'options.index',actual_index:7,bounds:null}]}]);
+assert(actualLine.includes('下标 options.index = 7；data 的下标范围 未知'));
+assert(!actualLine.includes('第 1 级索引'));
+lineSummary('use(count, rxvec->abc);', [], [], 'use(count, rxvec->abc);', [selfValue,fieldValue]);
+const variableArea=frame.children[0].children.find(n=>n.children?.some(c=>c.dataset?.variableGroup));
+assert.strictEqual(variableArea.children.filter(n=>n.dataset?.variableGroup).length,2);
+assert(variableArea.children.every(n=>n.style.cssText.includes('border-bottom')));
+let rangeText=lineSummary('use(count);',[],[],'use(count);',[selfValue],{block_bytes:288,range_explanation:'LEGACY_RANGE_0_287'});
+assert(!rangeText.includes('LEGACY_RANGE_0_287'));assert(rangeText.includes('旧现场未保存地址与内存块'));
+rangeText=lineSummary('use( count );',[],[],'use( count );',[selfValue],{block_bytes:288,range_evidence_version:2,range_explanation:'BLOCK_REFERENCE',range_evidence:'Address 0x300 is 0 bytes after a block of size 288'});
+assert(rangeText.includes('BLOCK_REFERENCE'));assert(rangeText.includes('字节偏移，不是变量下标'));assert(rangeText.includes('范围依据：Address 0x300'));
 actualLine=lineSummary('return count;', [{...selfValue,initialization:{status:'defined',member_states:[]}}]);
 assert(actualLine.includes('实际值：41'));assert(actualLine.includes('1. count'));
 let lineText=lineSummary('return value;', [scalar('value','731')]);
-assert(lineText.includes('实际值：731'));assert(lineText.includes('value：未初始化'));
+assert(lineText.includes('实际值：731'));assert(lineText.includes('检查结果：未初始化'));
 lineText=lineSummary('int value = ptr -> length + ns::count;', [scalar('value','732'),scalar('length','WRONG_LENGTH'),scalar('count','WRONG_COUNT')]);
 assert(lineText.includes('实际值：732'));assert(!lineText.includes('WRONG_LENGTH'));assert(!lineText.includes('WRONG_COUNT'));
 assert(!lineText.includes('length：未初始化'));assert(!lineText.includes('count：未初始化'));
@@ -196,12 +225,17 @@ assert(!lineText.includes('NO_SOURCE_VARIABLE'));
 lineText=lineSummary('use(ptr->length);', [scalar('unrelated','WRONG_FRAME_VALUE')], [], 'use(ptr->length);',
  [{name:'ptr->length',role:'source_expression',status:'available',value:'123',initialization:{status:'undefined'}}]);
 assert(lineText.includes('本行逐项检查 1 项'));assert(lineText.includes('实际值：123'));
-assert(lineText.includes('ptr->length：未初始化'));assert(!lineText.includes('unrelated'));assert(!lineText.includes('WRONG_FRAME_VALUE'));
+assert(lineText.includes('检查结果：未初始化'));assert(!lineText.includes('unrelated'));assert(!lineText.includes('WRONG_FRAME_VALUE'));
+lineText=lineSummary('return table[i];', [],[{expression:'table[i]',base_expression:'table',index_expression:'i',status:'out_of_bounds',actual_index:99,bounds:[0,2]}]);
+assert(lineText.includes('下标 i = 99；table 的下标范围 0～2'));
+const mergedArea=frame.children[0].children.find(n=>n.children?.some(c=>c.dataset?.variableGroup));
+assert.strictEqual(mergedArea.children.filter(n=>n.dataset?.variableGroup==='table[i]').length,1);
+assert(mergedArea.textContent.includes('【异常】'));
 lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status:'out_of_bounds',actual_index:99,bounds:[0,2]}]);
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v23'));
+assert(lineText.includes('变量查看器 v27'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.

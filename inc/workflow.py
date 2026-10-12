@@ -52,6 +52,15 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
                 actual = {(e['id'], e['kind']) for e in base_data.get('errors', [])}
                 if expected != actual:
                     raise ValueError('步骤二 HTML 与 --xml 的错误列表不一致，未启动步骤三。请提供同一次检测生成的 XML 和 HTML。')
+                if project_dir is None:
+                    project_dir = base_data.get('project') or report.get('project') or None
+                saved_errors = {e['id']: e for e in base_data.get('errors', [])}
+                for error in report['errors']:
+                    saved = saved_errors[error['id']]
+                    for stack, old_stack in zip(error.get('stacks', []), saved.get('stacks', [])):
+                        for frame, old_frame in zip(stack.get('frames', []), old_stack.get('frames', [])):
+                            if all(str(frame.get(k, '')) == str(old_frame.get(k, '')) for k in ('dir', 'file', 'line', 'fn')) and old_frame.get('local_file'):
+                                frame['local_file'] = old_frame['local_file']
         metadata = report['debug_command']
         if not command:
             command = metadata['target_args']
@@ -75,7 +84,7 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
         if probe.returncode:
             raise ValueError('自动采集需要带 Python 支持的 GDB，未启动目标程序。\n' + out + err)
     if source and not step3_only:
-        prepare_output(directory, (['full-report.html', 'full-report.html.tmp', 'capture-updates.js', 'capture-updates.js.tmp'] if step3_only else ['report.html', 'report.html.tmp', 'full-report.html', 'full-report.html.tmp', 'capture-updates.js', 'capture-updates.js.tmp']),
+        prepare_output(directory, (['full-report.html', 'full-report.html.tmp', 'capture-updates.js', 'capture-updates.js.tmp', 'capture-progress.js', 'capture-progress.js.tmp'] if step3_only else ['report.html', 'report.html.tmp', 'full-report.html', 'full-report.html.tmp', 'capture-updates.js', 'capture-updates.js.tmp', 'capture-progress.js', 'capture-progress.js.tmp']),
                        [source, source.parent / 'run.json', base_path, stdin_file, Path(cwd or '.') / command[0]])
     elif not source:
         print('步骤 1/3：首次运行 Valgrind，保存 XML。此流程随后会再次运行目标程序。', flush=True)
@@ -169,14 +178,22 @@ def save_combined_report(report, directory, *, base_html=None, previous=(), live
         text = path.read_text(encoding='utf-8', errors='replace')
         item = {'id':identity, 'text':text}
         try:
-            item['snapshot'] = json.loads(path.with_suffix('.json').read_text(encoding='utf-8'))
+            snapshot_text = path.with_suffix('.json').read_text(encoding='utf-8')
+            item['snapshot'] = json.loads(snapshot_text)
+            item['revision'] = hashlib.sha256(snapshot_text.encode('utf-8')).hexdigest()
         except (OSError, ValueError):
             pass
         items.append(item)
     update_file = directory / 'capture-updates.js.tmp'
     key = report_key(base_html) if base_html else None
-    update_file.write_text('window.aivCaptureUpdate(' + json.dumps({'live':live,'items':items,'report_key':key,'replay_id':replay_id},ensure_ascii=True).replace('<','\\u003c') + ');', encoding='utf-8')
+    payload = {'live':live,'items':items,'report_key':key,'replay_id':replay_id}
+    revision = hashlib.sha256(json.dumps(payload, ensure_ascii=True).encode('utf-8')).hexdigest()
+    payload['update_revision'] = revision
+    update_file.write_text('window.aivCaptureUpdate(' + json.dumps(payload,ensure_ascii=True).replace('<','\\u003c') + ');', encoding='utf-8')
     update_file.replace(directory / 'capture-updates.js')
+    progress_file = directory / 'capture-progress.js.tmp'
+    progress_file.write_text('window.aivCaptureCheck(' + json.dumps({'revision': revision}) + ');', encoding='utf-8')
+    progress_file.replace(directory / 'capture-progress.js')
     refresh_capture_report(directory, base_html=base_html, report=report)
 
 
@@ -232,7 +249,7 @@ def refresh_capture_report(directory, *, base_html=None, report=None):
     else:
         content = (directory / 'report.html').read_text(encoding='utf-8')
     viewer_versions = re.findall(r'// aiv-stack-captures-v\d+', content)
-    if viewer_versions == ['// aiv-stack-captures-v23']:
+    if viewer_versions == ['// aiv-stack-captures-v27']:
         return
     from .templates import SOURCE_VIEW_STYLE, STACK_SCROLL_FUNCTION, SELECT_ERROR_FUNCTION, FILTER_STATE_SCRIPT
     if 'id="report-data"' in content:

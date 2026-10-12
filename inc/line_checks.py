@@ -18,7 +18,7 @@ def check_source_expressions(frame, source, budget):
 
 
 def _check_source_expressions(frame, source, budget, macro_scope=False):
-    text = source.get('identifiers', '')[:4096]
+    text = (source.get('control_header') or source).get('identifiers', '')[:4096]
     keywords = set(('return if else for while do switch case break continue const volatile static extern '
                     'int long short signed unsigned float double char bool void struct class enum union '
                     'auto sizeof alignof typedef using namespace template typename new delete throw try catch '
@@ -61,6 +61,7 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
         operations = [64]
         aliases, constants, uncertain_operands = {}, [], []
         def parse(text):
+            text = re.sub(r'\s+', ' ', text).strip()
             # Python AST is only a read-only grammar, never eval/parse_and_eval.
             # Preserve scoped C++ names as single names for GDB symbol lookup.
             def qualified(m):
@@ -71,7 +72,13 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                 return key
             text = re.sub(r'\b[A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)+', qualified, text)
             text = re.sub(r'\b(0[xX][0-9a-fA-F]+|\d+)[uUlL]+\b', r'\1', text)
-            return ast.parse(text.replace('->', '.'), mode='eval').body
+            # Keep arrow width so AST columns still point into the C++ text.
+            tree = ast.parse(text.replace('->', '. '), mode='eval').body
+            for node in ast.walk(tree):
+                label = ast.get_source_segment(text, node)
+                if label:
+                    node._aiv_label = re.sub(r'\b[A-Za-z_]\w*\b', lambda m: aliases.get(m.group(), m.group()), label)
+            return tree
 
         def name_value(name):
             name = aliases.get(name, name)
@@ -151,7 +158,9 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                             raise ValueError('字典键未初始化或不可访问，不据此读取元素')
                     return source_map_lookup(base, key)
                 index = integer(read(node.slice, depth+1))
-                access = {'expression':expression,
+                access = {'expression':getattr(node, '_aiv_label', expression),
+                          'base_expression':getattr(node.value, '_aiv_label', ''),
+                          'index_expression':getattr(node.slice, '_aiv_label', ''),
                           'actual_index':index, 'bounds':None}
                 row.setdefault('index_accesses', []).append(access)
                 kind = base.type.strip_typedefs()

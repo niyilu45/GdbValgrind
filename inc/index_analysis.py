@@ -4,7 +4,7 @@ INDEX_ANALYSIS_SCRIPT = r'''
 import ast
 
 def nested_index_analysis(frame, source):
-    text = source.get('identifiers', '')[:4096]
+    text = (source.get('control_header') or source).get('identifiers', '')[:4096]
     rows, expressions = [], []
     cursor = 0
     while cursor < len(text) and len(expressions) < 16:
@@ -68,6 +68,7 @@ def nested_index_analysis(frame, source):
             return value[node.attr]
         if isinstance(node, ast.Subscript):
             row = {'expression':ast.get_source_segment(expression,node) or expression,
+                   'base_expression':ast.get_source_segment(expression,node.value) or '',
                    'index_expression':ast.get_source_segment(expression,node.slice) or '',
                    'actual_index':None, 'bounds':None, 'status':'unknown'}
             try:
@@ -97,7 +98,7 @@ def nested_index_analysis(frame, source):
         raise ValueError('不执行函数调用、自增、赋值或其他不支持的表达式')
 
     for original in expressions:
-        expression = original.replace('->','.')
+        expression = original.replace('->','. ')
         first_row = len(rows)
         try:
             if '++' in original or '--' in original:
@@ -105,7 +106,7 @@ def nested_index_analysis(frame, source):
             tree = ast.parse(expression,mode='eval')
             if any(isinstance(n,(ast.Call,ast.NamedExpr)) for n in ast.walk(tree)):
                 raise ValueError('不执行函数调用或赋值')
-            inspect(tree.body,expression)
+            inspect(tree.body,original)
         except Exception as exc:
             if disconnected(str(exc)):
                 raise CaptureDisconnected(str(exc))

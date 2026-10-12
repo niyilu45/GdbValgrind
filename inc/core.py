@@ -450,13 +450,25 @@ def debug_commands(frame, pid, prefix, vgdb, project=None, stop_on_error=False, 
     return commands
 
 
-def prepare_capture(directory, requested_error_id, *, auto_continue=False):
+def prepare_capture(directory, requested_error_id, *, auto_continue=False, source_errors=()):
     """Each invocation gets its own directory; no previous capture is overwritten."""
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     session = Path(tempfile.mkdtemp(prefix="session-", dir=str(directory)))
     register_capture(session)
     config = {"directory": str(session), "requested_error_id": requested_error_id, "auto_continue": auto_continue}
+    source_paths, conflicts = {}, set()
+    for error in source_errors:
+        for stack in error.get('stacks', []):
+            for frame in stack.get('frames', []):
+                if not frame.get('file') or not frame.get('local_file'):
+                    continue
+                original = str(Path(frame.get('dir') or '') / frame['file']).replace('\\', '/')
+                local = str(frame['local_file'])
+                if original in source_paths and source_paths[original] != local:
+                    conflicts.add(original)
+                source_paths[original] = local
+    config['source_paths'] = {k: v for k, v in source_paths.items() if k not in conflicts}
     script = session / "capture.py"
     script.write_text("_capture_config = " + repr(config) + "\n" + GDB_CAPTURE_SCRIPT, encoding="utf-8")
     return session, script
@@ -565,7 +577,8 @@ def _run_debug(error, args, processes):
     print("\n调试 " + error["id"] + " · " + error["what"], flush=True)
     capture_script = None
     if auto_values:
-        session, capture_script = prepare_capture(args.capture_dir, error["id"], auto_continue=auto_continue)
+        session, capture_script = prepare_capture(args.capture_dir, error["id"], auto_continue=auto_continue,
+                                                  source_errors=getattr(args, 'navigation_errors', None) or [error])
         mode = "保存现场后自动继续至程序结束" if auto_continue else "保存现场后暂停，等待 continue 或 quit"
         print("自动采集模式：跳过源码断点，" + mode + "。\n采集目录: " + str(session), flush=True)
     else:
