@@ -37,7 +37,7 @@ checkbox.onchange();assert.strictEqual(navigation.children[1].textContent,'0/1')
 window.aivCaptureUpdate({live:true,items:[{id:'capture',snapshot}]});
 assert.strictEqual(matchingRows().length,1);
 const panel=frame.children[0];assert(panel.textContent.includes('实际值：42'));
-const all=panel.children.find(n=>n.dataset?.captureAllVariables==='yes');assert(!all.open);all.open=true;
+const all=panel.children.find(n=>n.dataset?.captureEvidence==='yes');assert(!all.open);all.open=true;
 assert.strictEqual(frame.open,true);
 assert(issue.children[0].textContent.includes('已有变量'));assert.strictEqual(navigation.children[1].textContent,'1/1');
 assert(navigation.children.every(node=>!node.children.some(n=>n.dataset?.captureBadge==='yes')));
@@ -137,7 +137,7 @@ assert(text.includes('request.length（int） = 99'));
 assert(text.includes('未初始化，显示值不可靠'));
 assert(!text.includes('request.buffer'));
 assert(!text.includes('raw_vbits'));
-const panel=frame.children[0],all=panel.children.find(n=>n.dataset?.captureAllVariables==='yes');
+const panel=frame.children[0],all=panel.children.find(n=>n.dataset?.captureEvidence==='yes');
 assert(!all.open);
 assert(!all.textContent.includes('request.buffer'));
 const summary=panel.children.filter(n=>n!==all).map(n=>n.textContent).join('');
@@ -145,10 +145,14 @@ assert(summary.includes('request.length'));
 assert(!summary.includes('request.buffer'));
 assert(!summary.includes('unrelated'));
 assert(!all.textContent.includes('unrelated'));
-const rows=all.children[1].children;
+const rows=panel.children.flatMap(n=>n.children||[]).flatMap(n=>n.children||[]);
 const member=name=>rows.find(n=>n.textContent.includes(name));
 assert.strictEqual(member('request.length').dataset.variableState,'abnormal');
 assert.strictEqual(member('request.length').style.color,'#9f3029');
+assert(!text.includes('本行变量明细'));
+assert(text.includes('变量分析依据（点击展开）'));
+assert(text.includes('现场核对：'));
+assert.strictEqual(text.split('= 99').length-1,1);
 // Two errors share a caller location: only the selected error's snapshot may
 // supply either frame, even when the replay seed ID is identical.
 const parentFrame=new Element();parentFrame.dataset.frameKey='0:2';nodes.detail.append(parentFrame);
@@ -175,12 +179,13 @@ const headerText=lineSummary('for (int i=0;',[],[],'for (int i=0;',[scalar('i','
 assert(headerText.includes('当前控制语句变量分析'));assert(headerText.includes('实际值：2'));assert(headerText.includes('实际值：8'));assert(!headerText.includes('WRONG_BODY'));
 report.errors[1].kind='InvalidWrite';
 // Real initialization results include $self for scalars and scalar members.
-const selfValue={name:'count',status:'available',value:'41',initialization:{status:'defined',complete:true,member_states:[{name:'$self',status:'defined'}]}};
+const selfValue={name:'count',status:'available',value:'41',initialization:{status:'defined',complete:true,address:'0x1234',checked_bytes:4,size_bytes:4,member_states:[{name:'$self',status:'defined'}]}};
 const fieldValue={name:'rxvec->abc',status:'available',value:'73',initialization:{status:'undefined',complete:true,member_states:[{name:'$self',status:'undefined'}]}};
 let actualLine=lineSummary('use(count, rxvec->abc);', [], [], 'use(count, rxvec->abc);', [selfValue,fieldValue]);
 assert(actualLine.includes('实际值：41'));assert(actualLine.includes('实际值：73'));
 assert(actualLine.includes('【已检查部分通过】1. count'));assert(actualLine.includes('【异常】2. rxvec->abc'));
 assert(actualLine.includes('检查结果：未初始化'));assert(!actualLine.includes('未采集到可直接对应'));
+assert(actualLine.includes('检查地址 0x1234'));assert(actualLine.includes('检查 4 / 4 字节'));
 assert(actualLine.includes('本行变量分析（含异常核查）'));
 assert(!actualLine.includes('本行需要核查的异常变量'));
 assert(!actualLine.includes('初始化状态无法确定'));
@@ -235,7 +240,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v27'));
+assert(lineText.includes('变量查看器 v28'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.
@@ -272,7 +277,7 @@ assert(nodes['capture-status'].textContent.includes('历史分配栈'));report.e
 // Changed source text disables line-level claims instead of guessing.
 report.errors[1].stacks[0].frames[1].source=[{number:10,text:'different_statement();'}];
 frame.children=[];detail(report.errors[1]);
-const changedPanel=frame.children[0],changedAll=changedPanel.children.find(n=>n.dataset?.captureAllVariables==='yes');
+const changedPanel=frame.children[0],changedAll=changedPanel.children.find(n=>n.dataset?.captureEvidence==='yes');
 assert(changedPanel.textContent.includes('源码行不同'));
 assert(!changedPanel.children.filter(n=>n!==changedAll).map(n=>n.textContent).join('').includes('request.length = 99'));
 window.aivCaptureUpdate({live:true,report_key:'different-report',items:[{snapshot:struct}]});

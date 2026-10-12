@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v27
+// aiv-stack-captures-v28
 (()=>{
  let running=true,timer,activeReplay=null,loadedRevision=null,probeRevision=null;const captures=new Map(),readableIds=new Set(),processed=new Map();
  const status=document.getElementById('capture-status');
@@ -91,7 +91,7 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v27 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v28 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
    for(const note of [frame.note,...(frame.inspection_errors||[]),!frame.source_line?.text&&frame.source_line?.note].filter(Boolean))add('p','采集说明：'+note).className='meta';
    if(directChecks){const rows=frame.line_checks.items,read=rows.filter(v=>v.status==='available').length,unknown=rows.filter(v=>['unknown','partial_check'].includes(v.initialization?.status||'unknown')).length;
     add('p','读取成功 '+read+' / '+rows.length+' 项；未读到 '+(rows.length-read)+' 项；初始化检查不完整或未知 '+unknown+' 项。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
@@ -155,7 +155,7 @@ SCRIPT = r'''
     const members=details?.members||v.initialization?.member_states?.filter(m=>m.name!=='$self');
     if(details||(members?.length||0)>0){
      let memberCount=0;
-     for(const m of members||[]){const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;if(!onLine(name))continue;const state=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);const row=add('span',(relatedCount+1)+'. '+name+' = '+(m.value??'旧现场未单独保存成员值')+'；'+(initLabels[state]||'初始化状态无法确定'),group);row.style.display='block';colorState(row,variableState(state,details?m.status:undefined,v.initialization?.complete));memberCount++;relatedCount++}
+     for(const m of members||[]){const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;if(!onLine(name))continue;const state=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);const row=add('span',(relatedCount+1)+'. '+name+(m.type?'（'+m.type+'）':'')+' = '+(m.value??'旧现场未单独保存成员值')+'；'+(initLabels[state]||'初始化状态无法确定'),group);row.style.display='block';colorState(row,variableState(state,details?m.status:undefined,v.initialization?.complete));if(m.note){const note=add('span','说明：'+m.note,group);note.style.display='block'}memberCount++;relatedCount++}
      if(!memberCount){add('span',(relatedCount+1)+'. '+v.name+'：本行出现此对象，但没有可对应的成员值，不展开其他成员。\n',group);relatedCount++}
     }else{let first=true;for(const row of variableLines(v)){const text=typeof row==='string'?row:row.text;const line=add('span',first?(relatedCount+1)+'. '+text.trimStart():text,group);first=false;line.style.display='block';if(row.state)colorState(line,row.state)}relatedCount++}
    }
@@ -172,12 +172,26 @@ SCRIPT = r'''
     if(memory.range_evidence)lines.push('范围依据：'+memory.range_evidence);
    }
    if(lines.length)add('p',lines.join('\n')).style.whiteSpace='pre-wrap';
-   const all=add('details','');all.dataset.captureAllVariables='yes';
-   add('summary','本行变量明细（不包含其他局部变量或未匹配的成员）',all);
-   const values=[];for(const v of relatedVariables)values.push({separator:true,name:v.name},...variableLines(v));
-   if(!values.length)values.push('没有可与当前源码行对应的变量。原始采集数据保留在 captures 目录。');
-   const valueBlock=add('pre','',all);valueBlock.className='source';valueBlock.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;padding:12px';
-   for(const row of values){if(row.separator){const divider=add('span','',valueBlock);divider.dataset.variableSeparator=row.name;divider.style.cssText='display:block;border-top:1px solid var(--line);margin:16px 0 12px';continue}const line=add('span',typeof row==='string'?row:row.text,valueBlock);line.style.display='block';if(row.state)colorState(line,row.state)}
+   const basis=add('details','');basis.dataset.captureEvidence='yes';
+   add('summary','变量分析依据（点击展开）',basis);
+   const proof=add('pre','',basis);proof.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere';
+   const evidenceLines=[
+    '现场核对：'+(saved.snapshot.association?.note||'该现场已通过停止位置校验及报告匹配；旧数据未记录详细校验说明。'),
+    '当前帧：#'+(frame.index??'?')+' '+(frame.function||'未知函数')+'；指令地址 '+(frame.pc||'未记录'),
+    '变量来源：'+(directChecks?'在当前 GDB 帧逐项读取源码表达式。':'旧现场作用域变量与源码文本匹配，未逐项读取表达式。'),
+    '初始化依据：有可用内存存储时读取 Valgrind 有效位；常量、寄存器和无法检查的对象按采集记录说明。未初始化值不可靠，初始化通过不证明访问合法。',
+    '范围依据：固定数组下标来自调试类型；内存块字节范围来自对应地址诊断，不推断变量业务范围。',
+    '匹配范围：'+(sourceChanged?'源码已变化，未展示变量值。':headerValid?'采集时的完整控制条件。':'当前源码行；仅文本对应，不证明该变量导致错误。')];
+   for(const v of relatedVariables){const info=v.initialization||{},notes=[];
+    if(info.address)notes.push('检查地址 '+info.address);
+    if(info.checked_bytes!==undefined)notes.push('检查 '+info.checked_bytes+' / '+(info.size_bytes??'未知')+' 字节');
+    if(info.complete!==undefined)notes.push(info.complete?'初始化检查范围完整':'初始化检查范围不完整');
+    if(info.undefined_byte_offsets?.length)notes.push('未初始化字节偏移 '+info.undefined_byte_offsets.join(', '));
+    if(info.unaddressable_byte_offsets?.length)notes.push('不可访问字节偏移 '+info.unaddressable_byte_offsets.join(', '));
+    if(info.reason)notes.push(info.reason);
+    evidenceLines.push(v.name+'：'+(notes.join('；')||'现场未提供逐字节检查依据，不能补推结论。'));
+   }
+   proof.textContent=evidenceLines.join('\n');
    const analysis=[];
    if(frame.index_analysis?.levels?.length){
     analysis.push('嵌套索引逐级分析（源码现场推导）');
