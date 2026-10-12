@@ -165,10 +165,11 @@ assert(!parentFrame.textContent.includes('parentB'));
 selected='bad';frame.children=[];parentFrame.children=[];detail(report.errors[1]);
 assert(frame.textContent.includes('session-B/error-1'));assert(parentFrame.textContent.includes('parentB'));
 // Keywords/whitespace must not hide locals; members must not impersonate locals.
-function lineSummary(source, variables, levels=[], identifiers=source, checked=null, memory={},header=null){
+function lineSummary(source, variables, levels=[], identifiers=source, checked=null, memory={},header=null,extra={}){
  const sample=runtime('bad.c');sample.frames[1].source_line={text:source,identifiers};
  sample.frames[1].variables=variables;sample.frames[1].index_analysis={levels};sample.memory=memory;if(header)sample.frames[1].source_line.control_header=header;
  if(checked)sample.frames[1].line_checks={version:1,items:checked};
+ Object.assign(sample,extra);
  frame.children=[];parentFrame.children=[];
  window.aivCaptureUpdate({live:false,replay_id:source,items:[{snapshot:sample}]});
  return frame.children[0].textContent;
@@ -178,6 +179,11 @@ const header={start_line:9,end_line:11,text:'for (int i=0;\n i < limit;\n ++i)',
 const headerText=lineSummary('for (int i=0;',[],[],'for (int i=0;',[scalar('i','2'),scalar('limit','8'),scalar('body_only','WRONG_BODY')],{}, {...header,start_line:10,end_line:12,lines:header.lines.map(r=>({...r,number:r.number+1}))});
 assert(headerText.includes('当前控制语句变量分析'));assert(headerText.includes('实际值：2'));assert(headerText.includes('实际值：8'));assert(!headerText.includes('WRONG_BODY'));
 report.errors[1].kind='InvalidWrite';
+const faultText=lineSummary('fault(value);',[],[],'fault(value);',null,{},null,{
+ precision:{version:'valgrind-3.22.0',register_precision:'allregs-at-each-insn',options:['--vgdb=full'],skipped:[]},
+ fault_analysis:{note:'one candidate',address:'0x170',last_address:'0x177',access_bytes:8,cause:'block boundary',instruction_address_verified:true,candidates:[{name:'value',address:'0x170',size_bytes:4,offset_bytes:0,exceeds_expression:true}]},
+ instruction_context:{instruction:'mov 0x8(%rax,%rcx,4),%edx',registers:'rcx 26',operands:[{operand:'0x8(%rax,%rcx,4)',address:'0x170',matches_fault_address:true,registers_precise:true,base_register:'rax',base_value:'0x100',index_register:'rcx',index_value:26,scale:4,displacement:8}],access_check:{address:'0x170',queried_bytes:8,requested_bytes:8,complete:true,unaddressable_offsets:[4,5,6,7],undefined_offsets:[],raw:'00000000________'}}});
+assert(faultText.includes('实际报错栈顶 #0'));assert(faultText.includes('valgrind-3.22.0'));assert(faultText.includes('rcx=26'));assert(faultText.includes('不可访问字节数 4'));assert(faultText.includes('候选表达式：value'));assert(faultText.includes('访问长度超过该表达式'));
 // Real initialization results include $self for scalars and scalar members.
 const selfValue={name:'count',status:'available',value:'41',initialization:{status:'defined',complete:true,address:'0x1234',checked_bytes:4,size_bytes:4,member_states:[{name:'$self',status:'defined'}]}};
 const fieldValue={name:'rxvec->abc',status:'available',value:'73',initialization:{status:'undefined',complete:true,member_states:[{name:'$self',status:'undefined'}]}};
@@ -196,7 +202,7 @@ assert(actualLine.includes('下标 options.index = 7；data 的下标范围 未�
 assert(!actualLine.includes('第 1 级索引'));
 assert(!actualLine.includes('访问 data[options.index]'));
 actualLine=lineSummary('use(buffer[idx]);',[],[],'use(buffer[idx]);',[{name:'buffer[idx]',status:'available',value:'7',initialization:{status:'defined'},index_accesses:[{expression:'buffer[idx]',base_expression:'buffer',index_expression:'idx',actual_index:20,bounds:[0,99],prefix_check:{requested:[0,20],checked_elements:21,coverage_complete:true,note:'只检查元素自身存储',ranges:[{start:0,end:15,status:'defined'},{start:16,end:18,status:'undefined'},{start:19,end:20,status:'unaddressable'}]}}]}]);
-assert(actualLine.includes('0～15：初始化及内存可访问性检查通过'));
+assert(actualLine.includes('0～15：已检查字节已初始化且可访问，不代表本次访问合法'));
 assert(actualLine.includes('16～18：存在未初始化字节'));
 assert(actualLine.includes('19～20：元素存储含不可访问内存'));
 assert(actualLine.includes('已检查 21 个元素'));
@@ -206,7 +212,7 @@ assert(prefixDetails);assert(!prefixDetails.open);
 const prefixRow=(name,index,requested,ranges,checked=27,complete=true)=>({name,status:'available',value:'7',initialization:{status:'defined'},index_accesses:[{expression:name,base_expression:name.split('[')[0],index_expression:'idx',actual_index:index,bounds:[0,287],prefix_check:{requested,bounds:[0,287],checked_elements:checked,coverage_complete:complete,note:'range test',ranges}}]});
 actualLine=lineSummary('use(items[idx]);',[],[],'use(items[idx]);',[prefixRow('items[idx]',26,[0,26],[{start:0,end:0,status:'defined'},{start:1,end:26,status:'undefined'}])]);
 assert(actualLine.includes('应覆盖 0～26'));assert(actualLine.includes('已检查 27 个元素'));
-assert(actualLine.includes('0～0：初始化及内存可访问性检查通过'));assert(actualLine.includes('1～26：存在未初始化字节'));
+assert(actualLine.includes('0～0：已检查字节已初始化且可访问，不代表本次访问合法'));assert(actualLine.includes('1～26：存在未初始化字节'));
 assert(actualLine.includes('旧现场未保存区间字节数及地址依据'));
 const evidenced=prefixRow('proofArray[idx]',26,[0,26],[{start:0,end:26,status:'defined'}]);
 evidenced.initialization={status:'defined',address:'0x168',checked_bytes:4,size_bytes:4,complete:true};
@@ -245,11 +251,11 @@ const failedMember=prefixRow('retry[idx].member',26,[0,26],[{start:0,end:0,statu
 Object.assign(failedMember.index_accesses[0].prefix_check,{member_path:'member',attempted_elements:27,failed_elements:1,query_errors:[{start:1,end:1,address:'0x108',bytes:4,reason:'format mismatch',response:'unavailable'}]});
 actualLine=lineSummary('use(retry[idx].member);',[],[],'use(retry[idx].member);',[failedMember]);
 assert(actualLine.includes('尝试检查 27 项；成功核对 26 项；查询失败 1 项'));
-assert(actualLine.includes('2～26：初始化及内存可访问性检查通过'));
+assert(actualLine.includes('2～26：已检查字节已初始化且可访问，不代表本次访问合法'));
 assert(actualLine.includes('查询失败区间 1～1，地址 0x108'));
 assert(actualLine.includes('原始返回：unavailable'));
 actualLine=lineSummary('use(stale[idx]);',[],[],'use(stale[idx]);',[prefixRow('stale[idx]',26,[0,0],[{start:0,end:0,status:'defined'}],1)]);
-assert(actualLine.includes('范围检查记录与当前下标不一致'));assert(!actualLine.includes('0～0：初始化及内存可访问性检查通过'));
+assert(actualLine.includes('范围检查记录与当前下标不一致'));assert(!actualLine.includes('0～0：已检查字节已初始化且可访问，不代表本次访问合法'));
 actualLine=lineSummary('use(part[idx]);',[],[],'use(part[idx]);',[prefixRow('part[idx]',26,[0,26],[{start:0,end:0,status:'defined'},{start:1,end:26,status:'unchecked'}],1,false)]);
 assert(actualLine.includes('1～26：未检查'));
 assert(descendants(frame.children[0]).find(n=>n.dataset.arrayPrefix==='yes').open);
@@ -320,7 +326,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v38'));
+assert(lineText.includes('变量查看器 v40'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.

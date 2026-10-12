@@ -13,6 +13,32 @@ from inc import cli
 
 
 class CaptureTests(unittest.TestCase):
+    def test_fault_candidates_require_verified_top_frame_address(self):
+        analyze = self.scope['analyze_fault_variables']
+        item = {'name': 'arr[i].member', 'storage': {'address':'0x100', 'size_bytes':4}}
+        snapshot = {'association':{'status':'verified'},
+                    'memory':{'address':'0x100', 'access_bytes':8, 'access':'read',
+                              'explanation':'block boundary crossed'},
+                    'frames':[{'line_checks':{'items':[item]}}]}
+        result = analyze(snapshot)
+        self.assertEqual(result['status'], 'single_candidate')
+        self.assertTrue(result['candidates'][0]['exceeds_expression'])
+        self.assertEqual(result['last_address'], '0x107')
+        del item['storage']
+        item['index_accesses'] = [{'expression':'arr[i]', 'prefix_check':{
+            'member_path':'member', 'target_storage':{'address':'0x100','size_bytes':4}}}]
+        self.assertEqual(analyze(snapshot)['status'], 'single_candidate')
+        snapshot['frames'][0]['line_checks']['items'].append(dict(item, name='alias', storage={'address':'0x100','size_bytes':4}))
+        self.assertEqual(analyze(snapshot)['status'], 'multiple_candidates')
+        snapshot['frames'].insert(0, {'line_checks':{'items':[]}})
+        self.assertEqual(analyze(snapshot)['status'], 'unknown')
+        snapshot['frames'].pop(0)
+        snapshot['association']['status'] = 'unverified'
+        self.assertEqual(analyze(snapshot)['candidates'], [])
+        snapshot['association']['status'] = 'verified'
+        snapshot['memory']['address'] = '0x104'
+        self.assertEqual(analyze(snapshot)['status'], 'unknown')
+
     def test_allocation_ownership_does_not_accept_neighboring_live_block(self):
         answers = {0x108:"Address 0x108 is 8 bytes inside a block of size 32 alloc'd",
                    0x124:"Address 0x124 is 4 bytes inside a block of size 8 alloc'd",

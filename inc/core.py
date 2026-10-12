@@ -21,6 +21,7 @@ import webbrowser
 import xml.etree.ElementTree as ET
 from .templates import HTML, PAGED_SCRIPT
 from .capture import GDB_CAPTURE_SCRIPT
+from .precision import probe_precision, precision_lines
 from .processes import ProcessSession, interrupt_scope
 from .xmlstream import read_xml
 from .commands import command_metadata
@@ -463,13 +464,14 @@ def debug_commands(frame, pid, prefix, vgdb, project=None, stop_on_error=False, 
     return commands
 
 
-def prepare_capture(directory, requested_error_id, *, auto_continue=False, source_errors=()):
+def prepare_capture(directory, requested_error_id, *, auto_continue=False, source_errors=(), precision=None):
     """Each invocation gets its own directory; no previous capture is overwritten."""
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     session = Path(tempfile.mkdtemp(prefix="session-", dir=str(directory)))
     register_capture(session)
     config = {"directory": str(session), "requested_error_id": requested_error_id, "auto_continue": auto_continue}
+    config['precision'] = precision or {}
     source_paths, conflicts = {}, set()
     for error in source_errors:
         for stack in error.get('stacks', []):
@@ -593,9 +595,13 @@ def _run_debug(error, args, processes):
         raise ValueError("可执行程序不存在: " + str(executable))
     print("\n调试 " + error["id"] + " · " + error["what"], flush=True)
     capture_script = None
+    print('正在检测 Valgrind 版本和高精度选项（每项最多 5 秒）…', flush=True)
+    precision = probe_precision(shutil.which('valgrind'), debugging=True)
+    for line in precision_lines(precision):
+        print(line, flush=True)
     if auto_values:
         session, capture_script = prepare_capture(args.capture_dir, error["id"], auto_continue=auto_continue,
-                                                  source_errors=getattr(args, 'navigation_errors', None) or [error])
+                                                  source_errors=getattr(args, 'navigation_errors', None) or [error], precision=precision)
         mode = "保存现场后自动继续至程序结束" if auto_continue else "保存现场后暂停，等待 continue 或 quit"
         print("自动采集模式：跳过源码断点，" + mode + "。\n采集目录: " + str(session), flush=True)
     else:
@@ -609,9 +615,9 @@ def _run_debug(error, args, processes):
         # Ctrl+C reaches the supervisor, which owns separate tool process groups.
         print('正在启动 Valgrind 和目标程序，随后连接 GDB…', flush=True)
         vg = processes.launch([shutil.which("valgrind"), "--tool=memcheck", "--leak-check=full",
-                               "--show-leak-kinds=all", "--track-origins=yes", "--vgdb=yes",
+                               "--show-leak-kinds=all", "--track-origins=yes",
                                "--vgdb-error=0", "--vgdb-prefix=" + prefix,
-                               "--log-file=" + str(log_path)] + (["--read-var-info=yes", "--error-limit=no"] if auto_values else []) + command,
+                               "--log-file=" + str(log_path)] + precision['options'] + (["--error-limit=no"] if auto_values else []) + command,
                               cwd=cwd, stdin=target_input, start_new_session=True)
         try:
             commands = debug_commands(frame, vg.pid, prefix, shutil.which("vgdb"), args.project_dir, args.stop_on_error, capture_script, auto_continue=auto_continue)

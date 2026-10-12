@@ -133,6 +133,7 @@ def check_array_prefix(base, index, low, high, budget, member_path=(), dynamic=F
                     if address <= 0 or address+(end-low)*stride+member_offset+width-1 > address_max:
                         raise ValueError('尾部数组探测地址不可用或溢出，不继续查询')
             cache = budget.setdefault('array_prefix_cache', {})
+            result['target_storage'] = {'address': hex(address+(index-low)*stride+member_offset), 'size_bytes': width}
             cache_key = (address, str(element), stride, low, high, index, tuple(member_path), member_offset, width, dynamic)
             if cache_key in cache:
                 cached = deepcopy(cache[cache_key])
@@ -473,6 +474,13 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                 results.append(row)
                 continue
             row['type'] = str(value.type)
+            # Save storage before reading the value: an illegal target may
+            # expose an address/type even when fetching its bytes fails.
+            try:
+                if value.address is not None:
+                    row['storage'] = {'address': hex(int(value.address)), 'size_bytes': int(value.type.sizeof)}
+            except Exception:
+                pass
             if value.is_optimized_out:
                 row.update(status='optimized_out', value='已被编译器优化，无法读取')
             else:

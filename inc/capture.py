@@ -74,6 +74,52 @@ def memory_facts(message):
         facts['range_explanation'] = '实际访问地址：%s；访问宽度：%s 字节。诊断未提供可确认的存活内存块边界，合法范围未知；非法访问也可能来自悬空指针或无效地址，不能一律推断为数组越界。' % (facts.get('address', '未提供'), facts['access_bytes'])
     return facts
 
+def analyze_fault_variables(snapshot):
+    """Address correspondence only; never infer causality from a green V-bit check."""
+    result = {'version': 1, 'status': 'unknown', 'candidates': [],
+              'note': '未将非法访问对应到源码表达式；检查通过的变量不能排除本次非法访问。'}
+    if snapshot.get('association', {}).get('status') != 'verified':
+        return result
+    memory = snapshot.get('memory', {})
+    try:
+        address, width = int(memory['address'], 16), int(memory['access_bytes'])
+        if memory.get('access') not in ('read', 'write') or width <= 0:
+            return result
+    except (KeyError, ValueError, TypeError):
+        return result
+    result.update(address=hex(address), access_bytes=width,
+                  last_address=hex(address+width-1), cause=memory.get('explanation', '现有诊断不足以确定越界或释放原因。'))
+    context = snapshot.get('instruction_context', {})
+    result['instruction_address_verified'] = bool(context.get('pc') == snapshot['association'].get('current_pc') and
+        any(op.get('matches_fault_address') and op.get('registers_precise') for op in context.get('operands', [])))
+    # Only the faulting frame, never caller arguments or another grouped stop.
+    frames = snapshot.get('frames', [])
+    for item in (frames[0].get('line_checks', {}).get('items', []) if frames else []):
+        storage = item.get('storage') or item.get('initialization', {})
+        if not storage.get('address'):
+            for access in item.get('index_accesses', []):
+                prefix = access.get('prefix_check', {})
+                expression = access.get('expression', '')
+                if prefix.get('member_path'):
+                    expression += '.' + prefix['member_path']
+                if re.sub(r'\s+', '', expression) == re.sub(r'\s+', '', item.get('name', '')):
+                    storage = prefix.get('target_storage', {})
+        try:
+            start, size = int(storage['address'], 16), int(storage['size_bytes'])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if size <= 0 or not start <= address < start+size:
+            continue
+        result['candidates'].append({'name': item['name'], 'address': hex(start),
+            'size_bytes': size, 'offset_bytes': address-start,
+            'exceeds_expression': address+width > start+size})
+    count = len(result['candidates'])
+    result['status'] = 'single_candidate' if count == 1 else 'multiple_candidates' if count else 'unknown'
+    if count:
+        result['note'] = ('找到一个地址对应表达式，仍需结合指令确认它是否导致错误。' if count == 1 else
+                          '多个表达式覆盖同一访问地址，可能存在别名，不能唯一确定错误变量。')
+    return result
+
 def capture_identity(message):
     # Within one replay, distinct instruction sites must not suppress each
     # other merely because debug line information is the same. Heap addresses
@@ -547,6 +593,8 @@ class AutoValueCapture:
                 if 'block_bytes' not in snapshot['memory']:
                     snapshot['memory'] = memory_facts(message + '\n' + snapshot['address_details'])
             frame = gdb.newest_frame()
+            snapshot['precision'] = _capture_config.get('precision', {})
+            snapshot['instruction_context'] = capture_fault_context(frame, snapshot['memory'], snapshot['precision']) if frame else {}
             initialization_budget = {'queries': 256, 'bytes': 32768}
             for index in range(16):
                 if frame is None:
@@ -600,6 +648,7 @@ class AutoValueCapture:
                 'diagnostic_pc': diagnostic_pc.group(1) if diagnostic_pc else None, 'current_pc': current_pc,
                 'note': '已核对当前 PC 与 Valgrind 主错误栈顶地址，以及单次错误或单次新增错误报告' if verified else
                         '无法确认最近错误与当前停止现场一致；保留原始数据，不自动填入报告堆栈'}
+            snapshot['fault_analysis'] = analyze_fault_variables(snapshot)
             snapshot['initialization_analysis'] = analyze_initialization_use(snapshot)
             self.sequence += 1
             snapshot['capture_sequence'] = self.sequence
@@ -719,3 +768,5 @@ from .index_analysis import INDEX_ANALYSIS_SCRIPT
 GDB_CAPTURE_SCRIPT += INDEX_ANALYSIS_SCRIPT
 from .line_checks import LINE_CHECK_SCRIPT
 GDB_CAPTURE_SCRIPT += LINE_CHECK_SCRIPT
+from .fault_context import FAULT_CONTEXT_SCRIPT
+GDB_CAPTURE_SCRIPT += FAULT_CONTEXT_SCRIPT

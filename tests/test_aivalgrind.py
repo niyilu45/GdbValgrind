@@ -214,7 +214,8 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(cli.main(["report", str(self.path), "-o", str(self.path)]), 2)
         self.assertEqual(cli.main(["debug", str(self.path), "--error", "missing", "--", "./demo"]), 2)
 
-    def test_launcher_commands_input_and_cleanup(self):
+    @patch('inc.core.probe_precision', return_value={'version':'valgrind-3.22.0', 'options':['--vgdb=full'], 'skipped':[], 'register_precision':'allregs-at-each-insn'})
+    def test_launcher_commands_input_and_cleanup(self, precision):
         binary = self.root / "program with spaces"
         binary.write_text("test executable")
         input_file = self.root / "input.txt"
@@ -245,9 +246,11 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(av.run_debug(item, args), 0)
             kill.assert_any_call(12345, av.signal.SIGTERM)
         self.assertEqual(captured[0][-2:], [str(binary), "argument with spaces"])
+        self.assertIn('--vgdb=full', captured[0])
         self.assertEqual(captured[1][-2:], [str(binary), "argument with spaces"])
 
-    def test_gdb_launch_failure_cleans_up_target(self):
+    @patch('inc.core.probe_precision', return_value={'version':'unknown', 'options':['--vgdb=yes'], 'skipped':[], 'register_precision':'unknown'})
+    def test_gdb_launch_failure_cleans_up_target(self, precision):
         binary = self.root / "demo"
         binary.write_text("test")
         item = self.load(xml(error()))["errors"][0]

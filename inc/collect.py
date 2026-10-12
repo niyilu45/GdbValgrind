@@ -24,6 +24,7 @@ from .terminal import TerminalProgress
 from .output import prepare_output, COLLECTION_FILES
 from .program_output import ProgramOutput
 from .watchdog import CollectionWatchdog
+from .precision import probe_precision, precision_lines
 
 
 def summary_data(report):
@@ -76,10 +77,20 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
     if not executable.is_file() or not workdir.is_dir():
         raise ValueError('程序或工作目录不存在')
     directory = prepare_output(output_dir, COLLECTION_FILES, [executable, stdin_file])
+    print('正在检测 Valgrind 版本和诊断选项（每项最多 5 秒）…', flush=True)
+    precision = probe_precision(shutil.which('valgrind'))
+    runtime_info = dict(runtime_info or {})
+    runtime_info.setdefault('feature', 'collect')
+    runtime_info.setdefault('tools', [])
+    for line in precision_lines(precision):
+        print(line, flush=True)
+    runtime_info['requirements'] = list(runtime_info.get('requirements', [])) + [
+        '诊断增强：%d 项已启用 / %d 项未确认；实际参数已保存 run.json' % (len(precision['options']), len(precision['skipped']))]
     xml_path = directory / 'errors.xml'
     xml_path.touch()
     (directory / 'run.json').write_text(json.dumps({
         'schema': 1, 'xml_file': xml_path.name,
+        'precision': precision,
         'command': [str(executable.resolve())] + list(command[1:]),
         'cwd': str(workdir), 'stdin_file': str(Path(stdin_file).resolve()) if stdin_file else None,
     }, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -168,7 +179,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
                 process = processes.launch([shutil.which('valgrind'), '--tool=memcheck', '--xml=yes',
                                             '--xml-file=' + str(xml_path), '--log-file=' + str(directory / 'valgrind.log'),
                                             '--leak-check=full', '--show-leak-kinds=all', '--track-origins=yes',
-                                            '--error-limit=no', str(executable.resolve())] + list(command[1:]),
+                                            '--error-limit=no'] + precision['options'] + [str(executable.resolve())] + list(command[1:]),
                                            cwd=workdir, stdin=target_input,
                                            stdout=transport.stdout if transport else output,
                                            stderr=transport.stderr if transport else diagnostics)
