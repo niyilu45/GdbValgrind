@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v33
+// aiv-stack-captures-v34
 (()=>{
  let running=true,timer,activeReplay=null,loadedRevision=null,probeRevision=null;const captures=new Map(),readableIds=new Set(),processed=new Map();
  const status=document.getElementById('capture-status');
@@ -135,7 +135,7 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v33 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v34 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
    for(const note of [frame.note,...(frame.inspection_errors||[]),!frame.source_line?.text&&frame.source_line?.note].filter(Boolean))add('p','采集说明：'+note).className='meta';
    if(directChecks){const rows=frame.line_checks.items,read=rows.filter(v=>v.status==='available').length,unknown=rows.filter(v=>['unknown','partial_check'].includes(v.initialization?.status||'unknown')).length;
     add('p','读取成功 '+read+' / '+rows.length+' 项；未读到 '+(rows.length-read)+' 项；初始化检查不完整或未知 '+unknown+' 项。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
@@ -209,6 +209,7 @@ SCRIPT = r'''
        colorState(add('p','当前下标 '+row.index+'，应检查 0～'+row.index+'；已保存范围 '+(p.requested||[]).join('～')+'。不采用这份范围结果，请重新执行步骤三。',box),'uncertain');continue;
       }
       add('summary',row.base+'：下标 '+p.requested.join('～')+' 范围检查（已检查 '+p.checked_elements+' 个元素；'+(p.coverage_complete?'范围扫描完成':'存在未检查范围')+'）',box);
+      if(p.attempted_elements!==undefined)add('p','尝试检查 '+p.attempted_elements+' 项；成功核对 '+p.checked_elements+' 项；查询失败 '+(p.failed_elements||0)+' 项。',box);
       if(!p.coverage_complete)box.open=true;
       add('p','当前下标 '+row.index+'；应覆盖 0～'+row.index+'。下面每行是一段检查结果，不代表整个检查范围。',box);
       const labels={defined:'初始化及内存可访问性检查通过',undefined:'存在未初始化字节，值不可靠',unaddressable:'元素存储含不可访问内存',out_of_bounds:'超出数组边界，未读取',unknown:'布局或初始化状态无法确定',unchecked:'未检查，不能判断'};
@@ -260,6 +261,7 @@ SCRIPT = r'''
       if(p.checked_bytes>0)evidenceLines.push('  已检查地址 '+p.start_address+'～'+p.end_address+'；Valgrind get_vbits 成功查询 '+(p.queries||[]).length+' 次。');
      }else evidenceLines.push('  旧现场未保存区间字节数及地址依据；需要重新执行步骤三补齐，不从当前元素的检查信息推算。');
      if(p.reason)evidenceLines.push('  未完成原因：'+p.reason);
+     for(const failure of p.query_errors||[])evidenceLines.push('  查询失败区间 '+failure.start+'～'+failure.end+'，地址 '+failure.address+'，长度 '+failure.bytes+' 字节：'+failure.reason+'；原始返回：'+(failure.response||'无返回内容'));
     }
    }
    proof.textContent=evidenceLines.join('\n');

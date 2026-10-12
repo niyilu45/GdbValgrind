@@ -223,6 +223,13 @@ actualLine=lineSummary('use(records[idx].member);',[],[],'use(records[idx].membe
 assert(actualLine.includes('records[*].member：下标 0～26'));
 assert(actualLine.includes('只查询成员 member；结构体步长 16 字节'));
 assert(actualLine.includes('地址首尾之间的其他成员不在检查范围内'));
+const failedMember=prefixRow('retry[idx].member',26,[0,26],[{start:0,end:0,status:'defined'},{start:1,end:1,status:'unknown'},{start:2,end:26,status:'defined'}],26,false);
+Object.assign(failedMember.index_accesses[0].prefix_check,{member_path:'member',attempted_elements:27,failed_elements:1,query_errors:[{start:1,end:1,address:'0x108',bytes:4,reason:'format mismatch',response:'unavailable'}]});
+actualLine=lineSummary('use(retry[idx].member);',[],[],'use(retry[idx].member);',[failedMember]);
+assert(actualLine.includes('尝试检查 27 项；成功核对 26 项；查询失败 1 项'));
+assert(actualLine.includes('2～26：初始化及内存可访问性检查通过'));
+assert(actualLine.includes('查询失败区间 1～1，地址 0x108'));
+assert(actualLine.includes('原始返回：unavailable'));
 actualLine=lineSummary('use(stale[idx]);',[],[],'use(stale[idx]);',[prefixRow('stale[idx]',26,[0,0],[{start:0,end:0,status:'defined'}],1)]);
 assert(actualLine.includes('范围检查记录与当前下标不一致'));assert(!actualLine.includes('0～0：初始化及内存可访问性检查通过'));
 actualLine=lineSummary('use(part[idx]);',[],[],'use(part[idx]);',[prefixRow('part[idx]',26,[0,26],[{start:0,end:0,status:'defined'},{start:1,end:26,status:'unchecked'}],1,false)]);
@@ -295,7 +302,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v33'));
+assert(lineText.includes('变量查看器 v34'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.

@@ -10,6 +10,7 @@ def check_array_prefix(base, index, low, high, budget, member_path=()):
               'checked_elements': 0, 'coverage_complete': False,
               'evidence_version': 1, 'checked_bytes': 0, 'queried_bytes': 0, 'queries': [],
               'member_path': '.'.join(member_path),
+              'attempted_elements': 0, 'failed_elements': 0, 'query_errors': [],
               'note': '检查数组元素自身的存储；通过不代表业务取值合理，也不证明指针指向对象已分配。'}
     def append(first, last, state):
         if first > last:
@@ -71,6 +72,7 @@ def check_array_prefix(base, index, low, high, budget, member_path=()):
                 length = count * width
                 query_address = address + (cursor-low)*stride + member_offset
                 bits = []
+                query_failed = False
                 # Large struct elements must not produce an oversized monitor
                 # request. Gather all chunks before classifying the element.
                 for byte_offset in range(0, length, 4096):
@@ -80,9 +82,29 @@ def check_array_prefix(base, index, low, high, budget, member_path=()):
                     remaining['queries'] -= 1
                     remaining['bytes'] -= chunk_size
                     chunk_address = query_address+byte_offset
-                    bits.extend(parse_vbits(capture_execute('monitor get_vbits 0x%x %d' % (chunk_address, chunk_size)), chunk_size))
+                    response = ''
+                    try:
+                        response = capture_execute('monitor get_vbits 0x%x %d' % (chunk_address, chunk_size))
+                        bits.extend(parse_vbits(response, chunk_size))
+                    except Exception as exc:
+                        if disconnected(str(exc)):
+                            raise CaptureDisconnected(str(exc))
+                        query_failed = True
+                        if len(result['query_errors']) < 16:
+                            result['query_errors'].append({'start':cursor, 'end':cursor+count-1,
+                                'address':'0x%x' % chunk_address, 'bytes':chunk_size,
+                                'reason':str(exc), 'response':response[:512]})
+                        break
                     result['queries'].append({'address': '0x%x' % chunk_address, 'bytes': chunk_size})
                     result['queried_bytes'] += chunk_size
+                result['attempted_elements'] += count
+                if query_failed:
+                    before = len(result['ranges'])
+                    append(cursor, cursor+count-1, 'unknown')
+                    remaining['ranges'] -= len(result['ranges'])-before
+                    result['failed_elements'] += count
+                    cursor += count
+                    continue
                 for offset in range(count):
                     if remaining['ranges'] <= 0:
                         raise ValueError('结果区间过多，剩余范围未检查')
@@ -109,7 +131,9 @@ def check_array_prefix(base, index, low, high, budget, member_path=()):
         result['reason'] = str(exc)
     append(cursor, end, 'unchecked')
     append(max(0, high + 1), index, 'out_of_bounds')
-    result['coverage_complete'] = cursor > end
+    result['coverage_complete'] = cursor > end and result['failed_elements'] == 0
+    if result['failed_elements']:
+        result['reason'] = (result.get('reason', '') + '；' if result.get('reason') else '') + '%d 个元素的查询失败，已继续尝试后续范围；失败项标为无法确定，不能判为正常' % result['failed_elements']
     if result['coverage_complete'] and start <= end and len(cache) < 128:
         cache[cache_key] = deepcopy(result)
     return result

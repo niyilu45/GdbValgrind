@@ -93,7 +93,24 @@ class CaptureTests(unittest.TestCase):
         result, _ = self.array_prefix([], 4, 4)
         self.assertEqual(result['checked_elements'], 0)
         self.assertFalse(result['coverage_complete'])
-        self.assertEqual(result['ranges'], [{'start':0,'end':4,'status':'unchecked'}])
+        self.assertEqual(result['ranges'], [{'start':0,'end':4,'status':'unknown'}])
+        self.assertEqual(result['failed_elements'],5)
+
+    def test_second_member_query_failure_does_not_skip_remaining_25(self):
+        element = self.value_type(7,8,fields=lambda:[SimpleNamespace(name='member',bitpos=0,bitsize=0,type=self.value_type())])
+        raw = ['00']*(27*8)
+        raw[8:12] = ['!']*4  # Simulate malformed/unavailable monitor response for arr[1].member.
+        result,calls = self.array_prefix(raw,26,287,element,member_path=('member',))
+        self.assertEqual(len(calls),27)
+        self.assertEqual(calls[-1],(0x100+26*8,4))
+        self.assertEqual(result['attempted_elements'],27)
+        self.assertEqual(result['checked_elements'],26)
+        self.assertEqual(result['failed_elements'],1)
+        self.assertEqual(result['ranges'],[{'start':0,'end':0,'status':'defined'},
+                                         {'start':1,'end':1,'status':'unknown'},
+                                         {'start':2,'end':26,'status':'defined'}])
+        self.assertEqual(result['query_errors'][0]['response'],'!!!!')
+        self.assertFalse(result['coverage_complete'])
 
     def test_struct_array_member_only_checks_same_member_in_previous_elements(self):
         integer = self.value_type()
