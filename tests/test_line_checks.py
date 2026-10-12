@@ -28,6 +28,62 @@ class Value:
 
 
 class LineCheckTests(unittest.TestCase):
+    def test_struct_reference_index_and_reported_ranges(self):
+        self.scope['gdb'].TYPE_CODE_REF=9
+        reference=Value(None,code=9)
+        reference.referenced_value=lambda:Value({'index':Value(1)},code=6)
+        rows=self.run_line('return data[options.index];',{'data':Value([Value(2),Value(43)],code=8),'options':reference})
+        self.assertEqual(rows[0]['value'],'43')
+        self.assertEqual(rows[0]['index_accesses'][0]['actual_index'],1)
+        self.assertEqual(rows[0]['index_accesses'][0]['bounds'],[0,1])
+        rows=self.run_line('return data[options.index];',{'data':Value(4096,code=5),'options':reference})
+        self.assertEqual(rows[0]['status'],'unavailable')
+        self.assertEqual(rows[0]['index_accesses'][0]['actual_index'],1)
+        self.assertIsNone(rows[0]['index_accesses'][0]['bounds'])
+
+    def map_value(self):
+        class MapType:
+            code=6
+            def strip_typedefs(self): return self
+            def __str__(self): return 'std::map<int, int>'
+            def template_argument(self,i): return 'std::less<int>'
+        value=Value({},code=6);value.type=MapType()
+        return value
+
+    def test_map_printer_lookup_summary_and_missing_key_do_not_insert(self):
+        value=self.map_value()
+        self.scope['gdb'].default_visualizer=lambda v:SimpleNamespace(display_hint=lambda:'map',children=lambda:iter([
+            ('0',Value(2)),('1',Value(29)),('2',Value(3)),('3',Value(31))]))
+        rows=self.run_line('use(values[key], values);',{'values':value,'key':Value(2)})
+        self.assertEqual(rows[0]['value'],'29')
+        self.assertIn('2 => 29',rows[2]['value'])
+        rows=self.run_line('return values[key];',{'values':value,'key':Value(99)})
+        self.assertEqual(rows[0]['status'],'unavailable')
+        self.assertIn('不会插入',rows[0]['value'])
+        self.assertEqual(value.value,{})
+
+    def test_native_libstdcpp_map_node_layouts_and_cycle_detection(self):
+        class Pointer:
+            def __init__(self,address,node): self.address,self.node=address,node
+            def __int__(self): return self.address
+            def cast(self,t): return self
+            def dereference(self): return self.node
+        zero=Pointer(0,None)
+        pair={'first':Value(2),'second':Value(47)}
+        node={'_M_left':zero,'_M_right':zero,'_M_value_field':pair}
+        root=Pointer(1,node)
+        pair_type=SimpleNamespace(pointer=lambda:None)
+        tree=Value({'_M_impl':{'_M_header':{'_M_parent':root}}})
+        tree.type.template_argument=lambda i:pair_type
+        value=self.map_value();value.value={'_M_t':tree}
+        self.scope['gdb'].lookup_type=lambda n:SimpleNamespace(pointer=lambda:None)
+        lookup=self.scope['source_map_lookup']
+        self.assertEqual(int(lookup(value,2)),47)
+        del node['_M_value_field'];node['_M_storage']=SimpleNamespace(address=Pointer(2,pair))
+        self.assertEqual(int(lookup(value,2)),47)
+        node['_M_left']=root
+        with self.assertRaisesRegex(ValueError,'循环'): lookup(value,2)
+
     def setUp(self):
         self.checked = []
         def check(value, budget):

@@ -127,6 +127,8 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                 return node.value
             if isinstance(node, ast.Attribute):
                 value = read(node.value, depth+1)
+                if value.type.strip_typedefs().code in (getattr(gdb, 'TYPE_CODE_REF', -1), getattr(gdb, 'TYPE_CODE_RVALUE_REF', -2)):
+                    value = value.referenced_value()
                 kind = value.type.strip_typedefs().code
                 if kind == gdb.TYPE_CODE_PTR:
                     info = check_initialization(value, budget)
@@ -139,11 +141,24 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                 return value[node.attr]
             if isinstance(node, ast.Subscript):
                 base = read(node.value, depth+1)
+                if base.type.strip_typedefs().code in (getattr(gdb, 'TYPE_CODE_REF', -1), getattr(gdb, 'TYPE_CODE_RVALUE_REF', -2)):
+                    base = base.referenced_value()
+                if source_is_map(base):
+                    key = read(node.slice, depth+1)
+                    if not isinstance(key, (int, str)):
+                        key_info = check_initialization(key, budget)
+                        if key_info.get('observed_status', key_info['status']) in ('undefined', 'partially_undefined', 'unaddressable'):
+                            raise ValueError('字典键未初始化或不可访问，不据此读取元素')
+                    return source_map_lookup(base, key)
                 index = integer(read(node.slice, depth+1))
+                access = {'expression':expression,
+                          'actual_index':index, 'bounds':None}
+                row.setdefault('index_accesses', []).append(access)
                 kind = base.type.strip_typedefs()
                 if kind.code != gdb.TYPE_CODE_ARRAY:
                     raise ValueError('动态指针长度未知，未读取该索引元素')
                 low, high = map(int, kind.range())
+                access['bounds'] = [low, high]
                 if not low <= index <= high:
                     row['initialization'] = {'status': 'out_of_bounds'}
                     raise ValueError('实际索引 %s，合法范围 %s～%s；未读取越界元素' % (index, low, high))
@@ -167,6 +182,8 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
         def integer(value):
             if isinstance(value, int):
                 return value
+            if value.type.strip_typedefs().code in (getattr(gdb, 'TYPE_CODE_REF', -1), getattr(gdb, 'TYPE_CODE_RVALUE_REF', -2)):
+                value = value.referenced_value()
             if value.type.strip_typedefs().code not in (gdb.TYPE_CODE_INT, gdb.TYPE_CODE_BOOL, gdb.TYPE_CODE_ENUM, gdb.TYPE_CODE_CHAR):
                 raise ValueError('索引不是整数')
             if any(value is v for v in constants):
@@ -207,7 +224,9 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                 row.update(status='optimized_out', value='已被编译器优化，无法读取')
             else:
                 kind = value.type.strip_typedefs().code
-                if kind in (gdb.TYPE_CODE_STRUCT, gdb.TYPE_CODE_UNION, gdb.TYPE_CODE_ARRAY):
+                if source_is_map(value):
+                    row.update(status='available', value=source_map_summary(value), initialization={'status':'unknown', 'reason':'仅只读展示容器内容，未验证容器内部结构或整次访问是否合法'})
+                elif kind in (gdb.TYPE_CODE_STRUCT, gdb.TYPE_CODE_UNION, gdb.TYPE_CODE_ARRAY):
                     row.update(status='unavailable', value='本行是整个对象，未展开未明确指定的成员')
                 else:
                     row.update(status='available', value=value.format_string(raw=True)[:4096])
@@ -220,3 +239,5 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
     return {'version': 1, 'items': results, 'truncated': len(expressions) > 32,
             'note': '逐项读取当前帧的源码表达式；不执行目标函数。初始化检查不等于业务取值检查，也不能单独证明本次错误原因。'}
 '''
+from .map_checks import MAP_CHECK_SCRIPT
+LINE_CHECK_SCRIPT = MAP_CHECK_SCRIPT + LINE_CHECK_SCRIPT

@@ -59,6 +59,14 @@ def memory_facts(message):
             valid = facts['valid_start_offset_bytes']
             allowed = ('0 到 %d 字节' % valid[1]) if valid else '无（内存已释放或访问宽度超过块大小）'
             facts['range_explanation'] = '相对内存块起点：本次访问 %d 字节，合法起始偏移为 %s；实际起始偏移 %d，覆盖偏移 %d 到 %d。此范围是内存块边界，不代表变量的业务取值范围或数组下标。' % (width,allowed,offset,offset,offset+width-1)
+            if facts.get('address'):
+                start = int(facts['address'], 16) - offset
+                facts['block_start_address'] = hex(start)
+                if valid:
+                    facts['valid_start_addresses'] = [hex(start), hex(start+valid[1])]
+                    facts['range_explanation'] += ' 合法起始地址：%s～%s；实际起始地址：%s。' % (*facts['valid_start_addresses'], facts['address'])
+    if access and 'range_explanation' not in facts:
+        facts['range_explanation'] = '实际访问地址：%s；访问宽度：%s 字节。诊断未提供可确认的存活内存块边界，合法范围未知；非法访问也可能来自悬空指针或无效地址，不能一律推断为数组越界。' % (facts.get('address', '未提供'), facts['access_bytes'])
     return facts
 
 def capture_identity(message):
@@ -445,6 +453,8 @@ class AutoValueCapture:
             snapshot['thread'] = list(thread.ptid) if thread else None
             if snapshot['memory'].get('address'):
                 snapshot['address_details'] = capture_execute('monitor v.info location ' + snapshot['memory']['address'])
+                if 'block_bytes' not in snapshot['memory']:
+                    snapshot['memory'] = memory_facts(message + '\n' + snapshot['address_details'])
             frame = gdb.newest_frame()
             initialization_budget = {'queries': 256, 'bytes': 32768}
             for index in range(16):

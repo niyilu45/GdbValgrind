@@ -154,14 +154,19 @@ function lineSummary(source, variables, levels=[], identifiers=source, checked=n
  return frame.children[0].textContent;
 }
 const scalar=(name,value)=>({name,value,status:'available',initialization:{status:'undefined'}});
+report.errors[1].kind='InvalidWrite';
 // Real initialization results include $self for scalars and scalar members.
 const selfValue={name:'count',status:'available',value:'41',initialization:{status:'defined',complete:true,member_states:[{name:'$self',status:'defined'}]}};
 const fieldValue={name:'rxvec->abc',status:'available',value:'73',initialization:{status:'undefined',complete:true,member_states:[{name:'$self',status:'undefined'}]}};
 let actualLine=lineSummary('use(count, rxvec->abc);', [], [], 'use(count, rxvec->abc);', [selfValue,fieldValue]);
 assert(actualLine.includes('实际值：41'));assert(actualLine.includes('实际值：73'));
-assert(actualLine.includes('【正常】1. count'));assert(actualLine.includes('【异常】2. rxvec->abc'));
+assert(actualLine.includes('【已检查部分通过】1. count'));assert(actualLine.includes('【异常】2. rxvec->abc'));
 assert(actualLine.includes('rxvec->abc：未初始化'));assert(!actualLine.includes('未采集到可直接对应'));
 assert(!actualLine.includes('初始化状态无法确定'));
+assert(actualLine.includes('Valgrind 已确认本次写入非法'));
+assert(!actualLine.includes('【正常】'));
+actualLine=lineSummary('use(data[options.index]);', [], [], 'use(data[options.index]);', [{name:'data[options.index]',status:'unavailable',value:'boundary unknown',initialization:{status:'unknown'},index_accesses:[{actual_index:7,bounds:null}]}]);
+assert(actualLine.includes('实际 7；合法范围 未知'));
 actualLine=lineSummary('return count;', [{...selfValue,initialization:{status:'defined',member_states:[]}}]);
 assert(actualLine.includes('实际值：41'));assert(actualLine.includes('1. count'));
 let lineText=lineSummary('return value;', [scalar('value','731')]);
@@ -195,7 +200,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v20'));
+assert(lineText.includes('变量查看器 v21'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.

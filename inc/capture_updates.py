@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v20
+// aiv-stack-captures-v21
 (()=>{
  let running=true,timer,activeReplay=null;const captures=new Map();
  const status=document.getElementById('capture-status');
@@ -34,7 +34,7 @@ SCRIPT = r'''
   return result;
  }
  const initLabels={defined:'已检查部分已初始化',undefined:'未初始化，显示值不可靠',partially_undefined:'部分未初始化，显示值不可靠',unaddressable:'内存不可访问',out_of_bounds:'索引越界，未读取越界元素',partial_check:'只检查了部分内容，其余未知',unknown:'初始化状态无法确定'};
- const stateStyles={normal:['正常','#195943','#edf5ef'],uncertain:['不确定','#805000','#fff3d6'],abnormal:['异常','#9f3029','#fff0ec']};
+ const stateStyles={normal:['已检查部分通过','#195943','#edf5ef'],uncertain:['不确定','#805000','#fff3d6'],abnormal:['异常','#9f3029','#fff0ec']};
  function variableState(state,readStatus,complete){
   if(['undefined','partially_undefined','unaddressable','out_of_bounds'].includes(state))return 'abnormal';
   if(readStatus&&readStatus!=='available')return 'uncertain';
@@ -50,6 +50,7 @@ SCRIPT = r'''
   const lines=[];const overall=variableState(info.observed_status||info.status,v.status,info.complete);
   lines.push({text:'\n'+v.name+(v.type?'（'+v.type+'）':'')+' · '+(v.role==='argument'?'函数参数':v.role==='source_expression'?'本行表达式逐项读取':'局部变量'),state:overall});
   if(v.macro_expansion)lines.push('当前源码位置的宏展开：'+v.macro_expansion);
+  for(const [index,access] of (v.index_accesses||[]).entries())lines.push('第 '+(index+1)+' 级索引：实际 '+access.actual_index+'；合法范围 '+(access.bounds?access.bounds.join('～'):'未知（没有可确认的数组边界）'));
   if(v.status&&v.status!=='available'){lines.push({text:'无法读取：'+v.value,state:'uncertain'});return lines}
   lines.push({text:'检查结果：'+(initLabels[info.status]||'未提供初始化检查结果'),state:overall});
   if(info.reason)lines.push('检查范围说明：'+info.reason);
@@ -87,7 +88,8 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v20 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'旧现场：没有本行逐项检查记录；以下仅是旧值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v21 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'旧现场：没有本行逐项检查记录；以下仅是旧值的源码匹配，不代表已逐项检查')).className='meta';
+   if(['InvalidRead','InvalidWrite'].includes(e.kind))colorState(add('p','Valgrind 已确认本次'+(e.kind==='InvalidRead'?'读取':'写入')+'非法。变量已初始化不代表指针有效、索引合法或对象仍存活。'),'abnormal');
    add('p','所属报告错误：'+e.id+' · 采集现场：'+(saved.captureId||'旧数据未提供现场文件名')).className='meta';
    if(e.records>1)add('p','本项合并了 '+e.records+' 条原始错误记录；以下仅来自上面标明的一次现场，不合并不同现场的变量值。').className='meta';
    add('p','现场来源：'+(frame.function||'未知函数')+' · '+(frame.file||'未知文件')+':'+(frame.line||'?')+' · GDB 帧 #'+(frame.index??'?')).className='meta';

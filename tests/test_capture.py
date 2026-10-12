@@ -137,6 +137,11 @@ class CaptureTests(unittest.TestCase):
         freed = facts('Invalid read of size 4\nAddress 0x1234 is 0 bytes inside a block of size 40 free\'d')
         self.assertIsNone(freed['valid_start_offset_bytes'])
         self.assertNotIn('valid_start_offset_bytes', facts('Invalid read of size 4'))
+        boundary=facts('Invalid read of size 4\nAddress 0x1010 is 0 bytes after a block of size 16 alloc\'d')
+        self.assertEqual(boundary['valid_start_addresses'],['0x1000','0x100c'])
+        unknown=facts('Invalid write of size 8\nAddress 0x0 is not stack\'d, malloc\'d or free\'d')
+        self.assertIn('合法范围未知',unknown['range_explanation'])
+        self.assertIn('0x0',unknown['range_explanation'])
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
