@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v28
+// aiv-stack-captures-v29
 (()=>{
  let running=true,timer,activeReplay=null,loadedRevision=null,probeRevision=null;const captures=new Map(),readableIds=new Set(),processed=new Map();
  const status=document.getElementById('capture-status');
@@ -47,13 +47,50 @@ SCRIPT = r'''
   node.style.color=color;node.style.backgroundColor=background;
   node.textContent='【'+label+'】'+node.textContent;
  }
+ function parsedIndices(expression){
+  const source=String(expression||'');if(source.length>4096||/["']/.test(source))return [];
+  const rows=[];
+  function scan(begin,end,depth=0){
+   if(depth>16)return;
+   let cursor=begin;
+   while(cursor<end){
+    const m=/[A-Za-z_$][\w$]*(?:(?:\s*(?:\.|->|::)\s*)[A-Za-z_$][\w$]*)*/.exec(source.slice(cursor,end));if(!m)break;
+    const start=cursor+m.index;let pos=start+m[0].length;
+    while(pos<end){
+     while(pos<end&&/\s/.test(source[pos]))pos++;
+     const member=/^(?:\.|->|::)\s*[A-Za-z_$][\w$]*/.exec(source.slice(pos,end));
+     if(member){pos+=member[0].length;continue}
+     if(source[pos]!=='[')break;
+     const open=pos;let level=1;pos++;
+     while(pos<end&&level){if(source[pos]==='[')level++;if(source[pos]===']')level--;pos++}
+     if(level)break;
+     scan(open+1,pos-1,depth+1);
+     rows.push({expression:source.slice(start,pos),base_expression:source.slice(start,open).trim(),index_expression:source.slice(open+1,pos-1).trim()});
+    }
+    cursor=Math.max(pos,start+1);
+   }
+  }
+  scan(0,source.length);return rows;
+ }
+ function indexLabel(access,owner,accesses,position){
+  if(access.index_expression)return access;
+  const key=s=>String(s||'').replace(/\s+/g,'');
+  const all=parsedIndices(owner);
+  // Legacy records used the complete expression for every access. Recover
+  // labels only when the full traversal matches; partial captures stay unknown.
+  if(accesses&&all.length===accesses.length&&accesses.every(a=>!a.index_expression&&(!a.expression||key(a.expression)===key(owner))))return {...access,...all[position]};
+  const local=parsedIndices(access.expression||owner);
+  const matching=local.filter(row=>key(row.expression)===key(access.expression||owner)&&(!access.base_expression||key(row.base_expression)===key(access.base_expression)));
+  if(matching.length===1&&(local.length===1||!accesses||access.base_expression))return {...access,...matching[0]};
+  return access;
+ }
  function variableLines(v){
   const info=v.initialization||{},details=v.member_details;
   const lines=[];const indexAbnormal=(v.index_accesses||[]).some(a=>a.bounds&&a.actual_index!==null&&(a.actual_index<a.bounds[0]||a.actual_index>a.bounds[1]));
   const overall=indexAbnormal?'abnormal':variableState(info.observed_status||info.status,v.status,info.complete);
   lines.push({text:'\n'+v.name+(v.type?'（'+v.type+'）':'')+' · '+(v.role==='argument'?'函数参数':v.role==='source_expression'?'本行表达式逐项读取':'局部变量'),state:overall});
   if(v.macro_expansion)lines.push('当前源码位置的宏展开：'+v.macro_expansion);
-  for(const access of v.index_accesses||[])lines.push('访问 '+(access.expression||v.name)+'：下标 '+(access.index_expression||'名称未记录')+' = '+access.actual_index+'；'+(access.base_expression||'该数组')+' 的下标范围 '+(access.bounds?access.bounds.join('～')+'（元素索引）':'未知（没有可确认的数组边界）'));
+  for(const [position,raw] of (v.index_accesses||[]).entries()){const access=indexLabel(raw,v.name,v.index_accesses,position);lines.push('下标 '+(access.index_expression||'无法唯一对应（旧现场缺少名称，请重新采集）')+' = '+(access.actual_index??'未知')+'；'+(access.base_expression||'该数组')+' 的下标范围 '+(access.bounds?access.bounds.join('～')+'（元素索引）':'未知（没有可确认的数组边界）'))}
   if(v.status&&v.status!=='available'){lines.push({text:'无法读取：'+v.value,state:'uncertain'});return lines}
   lines.push({text:'检查结果：'+(initLabels[info.status]||'未提供初始化检查结果'),state:overall});
   if(info.reason)lines.push('检查范围说明：'+info.reason);
@@ -91,7 +128,7 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v28 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v29 · '+(directChecks?'本行逐项检查 '+frame.line_checks.items.length+' 项'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
    for(const note of [frame.note,...(frame.inspection_errors||[]),!frame.source_line?.text&&frame.source_line?.note].filter(Boolean))add('p','采集说明：'+note).className='meta';
    if(directChecks){const rows=frame.line_checks.items,read=rows.filter(v=>v.status==='available').length,unknown=rows.filter(v=>['unknown','partial_check'].includes(v.initialization?.status||'unknown')).length;
     add('p','读取成功 '+read+' / '+rows.length+' 项；未读到 '+(rows.length-read)+' 项；初始化检查不完整或未知 '+unknown+' 项。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
@@ -195,10 +232,11 @@ SCRIPT = r'''
    const analysis=[];
    if(frame.index_analysis?.levels?.length){
     analysis.push('嵌套索引逐级分析（源码现场推导）');
-    for(const level of frame.index_analysis.levels){
+    for(const raw of frame.index_analysis.levels){
+     const level=indexLabel(raw,raw.expression);
      if(!onLine(level.expression))continue;
      const bounds=level.bounds?level.bounds.join('～'):'未知';
-     analysis.push({text:level.expression+'：下标 '+(level.index_expression||'名称未记录')+' = '+(level.actual_index??'未知')+'；数组下标范围 '+bounds+'；'+({in_bounds:'该下标在范围内',out_of_bounds:'该下标越界',unknown:'无法判断'}[level.status]||level.status)+(level.note?'（'+level.note+'）':''),state:variableState(level.status)});
+     analysis.push({text:'下标 '+(level.index_expression||'无法唯一对应（旧现场缺少名称，请重新采集）')+' = '+(level.actual_index??'未知')+'；'+(level.base_expression||'该数组')+' 的下标范围 '+bounds+'；'+({in_bounds:'该下标在范围内',out_of_bounds:'该下标越界',unknown:'无法判断'}[level.status]||level.status)+(level.note?'（'+level.note+'）':''),state:variableState(level.status)});
     }
     analysis.push(frame.index_analysis.note);
    }

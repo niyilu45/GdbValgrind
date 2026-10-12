@@ -194,6 +194,28 @@ assert(!actualLine.includes('【正常】'));
 actualLine=lineSummary('use(data[options.index]);', [], [], 'use(data[options.index]);', [{name:'data[options.index]',status:'unavailable',value:'boundary unknown',initialization:{status:'unknown'},index_accesses:[{expression:'data[options.index]',base_expression:'data',index_expression:'options.index',actual_index:7,bounds:null}]}]);
 assert(actualLine.includes('下标 options.index = 7；data 的下标范围 未知'));
 assert(!actualLine.includes('第 1 级索引'));
+assert(!actualLine.includes('访问 data[options.index]'));
+function legacyIndices(name, accesses){
+ const source='consume('+name+');';
+ return lineSummary(source,[],[],source,[{name,status:'unavailable',value:'boundary unknown',initialization:{status:'unknown'},index_accesses:accesses}]);
+}
+actualLine=legacyIndices('data[ctx->index]',[{expression:'data[ctx->index]',actual_index:7,bounds:null}]);
+assert(actualLine.includes('下标 ctx->index = 7；data 的下标范围 未知'));
+assert(!actualLine.includes('名称未记录'));assert(!actualLine.includes('访问 data'));
+actualLine=legacyIndices('matrix[row][col]',[2,7].map(actual_index=>({expression:'matrix[row][col]',actual_index,bounds:[0,3]})));
+assert(actualLine.includes('下标 row = 2；matrix 的下标范围 0～3'));
+assert(actualLine.includes('下标 col = 7；matrix[row] 的下标范围 0～3'));
+actualLine=legacyIndices('data[indices[k]]',[1,9].map(actual_index=>({expression:'data[indices[k]]',actual_index,bounds:null})));
+assert(actualLine.includes('下标 k = 1；indices 的下标范围'));
+assert(actualLine.includes('下标 indices[k] = 9；data 的下标范围'));
+actualLine=legacyIndices('objects[i].items[j]',[2,8].map(actual_index=>({expression:'objects[i].items[j]',actual_index,bounds:null})));
+assert(actualLine.includes('下标 i = 2；objects 的下标范围'));
+assert(actualLine.includes('下标 j = 8；objects[i].items 的下标范围'));
+actualLine=legacyIndices('partial[row][col]',[{expression:'partial[row][col]',actual_index:7,bounds:null}]);
+assert(actualLine.includes('无法唯一对应'));assert(!actualLine.includes('下标 col = 7'));assert(!actualLine.includes('下标 row = 7'));
+actualLine=lineSummary('use(array[index]);',[],[{expression:'array[index]',actual_index:9,bounds:[0,3],status:'out_of_bounds'}]);
+assert(actualLine.includes('下标 index = 9；array 的下标范围'));
+assert(!actualLine.includes('array[index]：下标'));assert(!actualLine.includes('名称未记录'));
 lineSummary('use(count, rxvec->abc);', [], [], 'use(count, rxvec->abc);', [selfValue,fieldValue]);
 const variableArea=frame.children[0].children.find(n=>n.children?.some(c=>c.dataset?.variableGroup));
 assert.strictEqual(variableArea.children.filter(n=>n.dataset?.variableGroup).length,2);
@@ -240,7 +262,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v28'));
+assert(lineText.includes('变量查看器 v29'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.
