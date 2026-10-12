@@ -13,6 +13,38 @@ from inc import cli
 
 
 class CaptureTests(unittest.TestCase):
+    def test_source_line_beyond_one_mib_with_bounded_window(self):
+        source = self.root / 'large.c'
+        prefix = '/* ' + 'padding ' * 30 + '*/\n'
+        source.write_text(prefix * 5000 + 'for (int i = 0;\n i < limit;\n ++i) {\n use(value);\n}\n', encoding='utf-8')
+        self.assertGreater(source.stat().st_size, 1024 * 1024)
+        read = self.scope['capture_source_line']
+        result = read(str(source), 5002)
+        self.assertEqual(result['text'], ' i < limit;')
+        self.assertIn('limit', result['identifiers'])
+        header = result['control_header']
+        self.assertEqual((header['start_line'], header['end_line']), (5001, 5003))
+        self.assertEqual([r['number'] for r in header['lines']], [5001, 5002, 5003])
+        with patch('builtins.open', side_effect=AssertionError('cached source should not be reread')):
+            self.assertEqual(read(str(source), 5002), result)
+        result['text'] = 'mutated'
+        self.assertEqual(read(str(source), 5002)['text'], ' i < limit;')
+        missing = read(str(source), 6000)
+        self.assertIn('实际只有 5005 行', missing['note'])
+        self.assertNotIn('1 MiB', missing['note'])
+
+    def test_streamed_source_preserves_comment_state_before_window(self):
+        source = self.root / 'comment.c'
+        source.write_text('/*\n' + 'ignored_name\n' * 150 + '*/ use(value, "/* fake */"); // hidden\n', encoding='utf-8')
+        read = self.scope['capture_source_line']
+        self.assertEqual(read(str(source), 150)['identifiers'], '')
+        result = read(str(source), 152)
+        self.assertIn('use(value,', result['identifiers'])
+        self.assertNotIn('fake', result['identifiers'])
+        self.assertNotIn('hidden', result['identifiers'])
+        source.write_text('return updated_value;\n', encoding='utf-8')
+        self.assertIn('updated_value', read(str(source), 1)['identifiers'])
+
     def test_multiline_control_header_excludes_body_and_comments(self):
         source = self.root/'controls.c'
         source.write_text('for (int i = 0;\n i < options->limit; /* ignored_name */\n ++i) {\n use(body_only);\n}\nswitch (\n options\n ->mode) {\n case 1: use(case_only);\n}\n', encoding='utf-8')

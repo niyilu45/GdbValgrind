@@ -15,19 +15,17 @@ class ReportNavigation:
         self.target = None if config['auto_values'] else config['initial']
         self.breakpoints = []
         self.active = None
-        for entry in config['entries']:
-            # Automatic capture stops on Valgrind errors, not historical source
-            # locations (which may belong to unavailable system library symbols).
-            if not config['auto_values'] and entry['default']:
-                bp = self.create_location(entry)
-                if entry['id'] == self.target:
-                    self.active = bp
+        # Install only the requested location. Preinstalling the whole report
+        # probes unavailable library symbols and slows every continue command.
+        if self.target:
+            self.active = self.create_location(self.entries[self.target])
         if self.target and self.active is None:
             raise gdb.GdbError('目标错误没有可解析的源码或符号断点，未继续程序。请检查可执行文件与报告是否一致、是否带调试符号，或使用 --frame 选择工程调用帧。')
         gdb.events.exited.connect(self.on_exit)
 
     def create_location(self, entry, spec=None):
         candidates = [spec] if spec else entry.get('candidates', [entry['default']])
+        failures = []
         for candidate in candidates:
             if not candidate:
                 continue
@@ -35,14 +33,17 @@ class ReportNavigation:
                 bp = ReportLocation(self, entry['id'], candidate)
                 if getattr(bp, 'pending', False):
                     bp.delete()
+                    failures.append(candidate + '：符号尚未解析')
                     continue
                 self.breakpoints.append(bp)
                 if candidate != entry['default']:
-                    gdb.write('[AiValgrind] 原断点不可用，改用同一错误的调用帧：' + candidate + '\n')
+                    gdb.write('[AiValgrind] 当前目标改在调用帧暂停：' + candidate + '（不代表已到达实际出错指令）\n')
                 return bp
             except Exception as exc:
-                gdb.write('[AiValgrind] 无法设置断点 ' + candidate + '：' + str(exc) + '\n')
-        gdb.write('[AiValgrind] 报告第 %d 条当前没有可解析断点，跳过其导航断点。\n' % entry['order'])
+                failures.append(candidate + '：' + str(exc))
+        gdb.write('[AiValgrind] 目标错误第 %d 条的 %d 个候选位置均无法解析，程序保持暂停。可能缺少调试符号、相关库尚未加载或可执行文件与报告不一致。\n' % (entry['order'], len(failures)))
+        for failure in failures[:3]:
+            gdb.write('  ' + failure + '\n')
         return None
 
     def on_exit(self, event):
@@ -74,6 +75,8 @@ class ReportNavigation:
         bp = self.create_location(entry, spec if frame else None)
         if bp is None:
             raise gdb.GdbError('目标断点未解析，保留当前现场且不继续。请核对源码/符号，或指定工程调用帧。')
+        if self.active is not None:
+            self.active.enabled = False
         self.active = bp
         self.target = target
         gdb.write('[AiValgrind] 继续到报告第 %d 条的源码位置；其他断点、信号或内存错误仍可能提前暂停。\n' % entry['order'])
@@ -83,7 +86,15 @@ class ReportLocation(gdb.Breakpoint):
     def __init__(self, navigator, identity, spec):
         self.navigator = navigator
         self.identity = identity
-        super().__init__(spec, internal=True)
+        # Pending creation prints missing-symbol messages even for internal
+        # breakpoints. Fail directly and let navigation report one summary.
+        pending = gdb.parameter('breakpoint pending')
+        try:
+            gdb.execute('set breakpoint pending off', to_string=True)
+            super().__init__(spec, internal=True)
+        finally:
+            setting = 'auto' if pending is None else 'on' if pending else 'off'
+            gdb.execute('set breakpoint pending ' + setting, to_string=True)
 
     def stop(self):
         nav = self.navigator

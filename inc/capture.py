@@ -6,6 +6,8 @@ import gdb
 import json
 import re
 import html
+from collections import deque, OrderedDict
+from copy import deepcopy
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -229,25 +231,74 @@ def capture_control_header(clean_lines, original_lines, line):
                     'note': '控制语句跨行，只读取当前帧的变量值，不执行初始化、递增、赋值或函数调用；值不代表每次循环的历史状态'}
     return None
 
+_source_line_cache = OrderedDict()
+
 def capture_source_line(filename, line):
     # Bounded source-only inspection; never evaluate expressions in the target.
     try:
+        if line <= 0:
+            return {'note': '无法读取报错行：无效源码行号 %s' % line}
         if not Path(filename).is_file():
             filename = _capture_config.get('source_paths', {}).get(str(filename).replace('\\', '/'), filename)
+        stat = Path(filename).stat()
+        key = (str(filename), stat.st_mtime_ns, stat.st_size, line)
+        if key in _source_line_cache:
+            _source_line_cache.move_to_end(key)
+            return deepcopy(_source_line_cache[key])
+        # Scan to the requested line rather than truncating the file at 1 MiB.
+        # Keep only an 81-line window, retaining lexical state from earlier
+        # lines so a comment starting outside the window cannot become code.
+        window = deque(maxlen=81)
+        state = None
+        number = 0
         with open(filename, 'r', encoding='utf-8', errors='replace') as source:
-            text = source.read(1024 * 1024)
-        lines = text.splitlines()
-        if not 0 < line <= len(lines) or (len(text) == 1024 * 1024 and line == len(lines)):
-            return {'note': '无法读取报错行：行号超出源码范围或超过 1 MiB 读取上限'}
-        # Preserve line numbers while excluding comments and quoted literals.
-        clean = re.sub(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'',
-                       lambda m: '\n' * m.group().count('\n') or ' ', text, flags=re.S)
-        clean_lines = clean.split('\n')
-        result = {'text': lines[line - 1][:4096], 'identifiers': clean_lines[line - 1][:4096],
+            for number, raw in enumerate(source, 1):
+                pos, parts = 0, []
+                while pos < len(raw):
+                    if state == 'comment':
+                        end = raw.find('*/', pos)
+                        if end < 0:
+                            break
+                        state, pos = None, end + 2
+                    elif state:
+                        if raw[pos] == '\\':
+                            pos += 2
+                        elif raw[pos] == state:
+                            state, pos = None, pos + 1
+                        else:
+                            pos += 1
+                    else:
+                        marker = re.search(r'/\*|//|["\']', raw[pos:])
+                        if not marker:
+                            parts.append(raw[pos:])
+                            break
+                        parts.extend((raw[pos:pos + marker.start()], ' '))
+                        pos += marker.end()
+                        token = marker.group()
+                        if token == '//':
+                            break
+                        state = 'comment' if token == '/*' else token
+                window.append((number, raw.rstrip('\r\n')[:4096], ''.join(parts).rstrip('\r\n')[:4096]))
+                if number >= line + 40:
+                    break
+        if not 0 < line <= number:
+            return {'note': '无法读取报错行：请求第 %s 行，源码文件实际只有 %s 行（%s）' % (line, number, filename)}
+        first = window[0][0]
+        lines = [row[1] for row in window]
+        clean_lines = [row[2] for row in window]
+        local_line = line - first + 1
+        result = {'text': lines[local_line - 1], 'identifiers': clean_lines[local_line - 1],
                   'note': '源码文本关联，不代表该表达式已执行；宏、多行表达式和指针成员可能无法关联'}
-        header = capture_control_header(clean_lines, lines, line)
+        header = capture_control_header(clean_lines, lines, local_line)
         if header:
+            header['start_line'] += first - 1
+            header['end_line'] += first - 1
+            for row in header['lines']:
+                row['number'] += first - 1
             result['control_header'] = header
+        _source_line_cache[key] = deepcopy(result)
+        if len(_source_line_cache) > 128:
+            _source_line_cache.popitem(last=False)
         return result
     except (OSError, ValueError, IndexError) as exc:
         return {'note': '无法读取现场源码：' + str(exc)}

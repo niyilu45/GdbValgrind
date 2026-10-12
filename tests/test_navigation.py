@@ -26,6 +26,23 @@ class FakeCommand:
 
 
 class NavigationTests(unittest.TestCase):
+    def test_large_report_only_resolves_requested_target(self):
+        config = {**self.config, 'entries': self.config['entries'] + [
+            {'id': 'lib%d' % i, 'order': i+4, 'default': 'missing%d' % i,
+             'candidates': ['missing%d' % i], 'frames': {}} for i in range(2000)]}
+        with patch.dict(self.scope, {'ReportLocation': MagicMock(return_value=SimpleNamespace(pending=False))}):
+            nav = self.scope['ReportNavigation'](config)
+            self.scope['ReportLocation'].assert_called_once_with(nav, 'b', '-function b')
+        self.assertEqual(len(nav.breakpoints), 1)
+
+    def test_pending_setting_restored_when_breakpoint_creation_fails(self):
+        with patch.object(FakeBreakpoint, '__init__', side_effect=ValueError('Function missing not defined')):
+            with self.assertRaisesRegex(ValueError, '保留当前现场'):
+                self.nav.navigate('c')
+        commands = [c.args[0] for c in self.gdb.execute.call_args_list]
+        self.assertEqual(commands, ['set breakpoint pending off', 'set breakpoint pending on'])
+        self.assertNotIn('continue', commands)
+
     def test_missing_library_breakpoint_falls_back_without_breaking_other_errors(self):
         removed=[]
         def location(nav,identity,spec):
@@ -39,7 +56,7 @@ class NavigationTests(unittest.TestCase):
             nav=self.scope['ReportNavigation'](config)
         self.assertEqual(nav.active.spec,'project.c:17')
         self.assertEqual(len(nav.breakpoints),1)
-        self.assertEqual(len(removed),2)
+        self.assertEqual(len(removed),1)
 
     def test_explicit_unavailable_frame_preserves_current_stop(self):
         previous=self.nav.active
@@ -58,7 +75,7 @@ class NavigationTests(unittest.TestCase):
         self.gdb = SimpleNamespace(Breakpoint=FakeBreakpoint, Command=FakeCommand,
             COMMAND_RUNNING=1, GdbError=ValueError, string_to_argv=lambda s: s.split(),
             events=SimpleNamespace(exited=SimpleNamespace(connect=MagicMock())),
-            execute=MagicMock(), write=MagicMock())
+            execute=MagicMock(), write=MagicMock(), parameter=lambda name: True)
         self.config = {'initial': 'b', 'auto_values': False, 'restart_file': str(self.restart),
             'entries': [{'id': key, 'order': i, 'default': '-function '+key,
                          'frames': {'0:0': '-function '+key}} for i, key in enumerate('abc', 1)]}
@@ -66,14 +83,15 @@ class NavigationTests(unittest.TestCase):
         with patch.dict('sys.modules', {'gdb': self.gdb}):
             exec(GDB_NAVIGATION_SCRIPT, self.scope)
         self.nav = self.scope['_aiv_navigation']
+        self.gdb.execute.reset_mock()
 
     def test_forward_continues_and_tracks_only_reached_location(self):
         self.assertTrue(self.nav.active.stop())
         with patch('builtins.input', side_effect=AssertionError('forward must not prompt')):
             self.nav.navigate('c 0:0')
-        self.gdb.execute.assert_called_once_with('continue')
+        self.assertEqual(self.gdb.execute.call_args.args, ('continue',))
         self.assertEqual(self.nav.current, 'b')
-        self.assertFalse(self.nav.breakpoints[1].stop())
+        self.assertFalse(self.nav.breakpoints[0].stop())
         self.assertTrue(self.nav.active.stop())
         self.assertEqual(self.nav.current, 'c')
 
@@ -90,7 +108,7 @@ class NavigationTests(unittest.TestCase):
         nav.navigate('symbol')
         self.assertEqual(len(nav.breakpoints), 1)
         self.assertEqual(nav.active.spec, '-function mpn_addmul_l')
-        self.gdb.execute.assert_called_once_with('continue')
+        self.assertEqual(self.gdb.execute.call_args.args, ('continue',))
 
     def test_backward_no_keeps_paused_session(self):
         self.nav.active.stop()
