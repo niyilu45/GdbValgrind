@@ -1,5 +1,8 @@
 import json
 from pathlib import Path
+import re
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -8,6 +11,45 @@ from inc.commands import absolute_path
 
 
 class CommandTests(unittest.TestCase):
+    def test_report_exported_by_external_python_script_uses_library_entrypoint(self):
+        library = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix='external caller ') as directory:
+            root = Path(directory)
+            caller = root / 'caller'
+            work = root / 'working directory'
+            output = root / 'reports'
+            project = root / 'source project'
+            for path in (caller, work, output, project):
+                path.mkdir()
+            xml = output / 'errors.xml'
+            xml.write_text('<valgrindoutput><args><argv><exe>./build/app</exe>'
+                           '</argv></args></valgrindoutput>', encoding='utf-8')
+            script = caller / 'external_driver.py'
+            script.write_text(
+                'import sys\n'
+                'sys.path.insert(0, ' + repr(str(library)) + ')\n'
+                'from inc import export_report\n'
+                'export_report("../reports/errors.xml", "../reports/report.html", '
+                'project_dir="../source project")\n', encoding='utf-8')
+            result = subprocess.run([sys.executable, str(script)], cwd=str(work),
+                                    capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', errors='replace'))
+            html = (output / 'report.html').read_text(encoding='utf-8')
+            payload = re.search(r'<script id="report-data" type="application/json">(.*?)</script>',
+                                html, re.S)
+            self.assertIsNotNone(payload)
+            metadata = json.loads(payload.group(1))['debug_command']
+            self.assertEqual(metadata['base_args'], [
+                str(Path(sys.executable).resolve()), str(library / 'aivalgrind.py'),
+                'debug', str(xml.resolve()), '--project-dir', str(project.resolve()),
+                '--cwd', str(project.resolve())])
+            self.assertEqual(metadata['target_args'], [str(project / 'build/app')])
+            # The copied command must remain runnable from an unrelated directory.
+            help_result = subprocess.run(metadata['base_args'][:2] + ['--help'],
+                                         cwd=str(caller), capture_output=True, timeout=30)
+            self.assertEqual(help_result.returncode, 0,
+                             help_result.stderr.decode('utf-8', errors='replace'))
+
     def test_xml_arguments_and_project_survive_partial_report(self):
         with tempfile.TemporaryDirectory(prefix='report space ') as directory:
             project = Path(directory) / 'project space'

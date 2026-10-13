@@ -124,6 +124,10 @@ python3 main.py auto-values --xml errors.xml -p . --capture-dir captures -- ./yo
 
 在自己的 Python 工程里直接调用，无需构造命令行参数：
 
+调用文件可以放在其他目录。网页调试命令中的 `aivalgrind.py` 绝对路径来自实际加载的 AiValgrind 库目录，与调用文件的位置及当前工作目录无关。XML、工程目录也会转换为绝对路径；传入的相对路径按调用时的工作目录解释。若希望相对于调用文件定位输入，请使用 `Path(__file__).resolve().parent / "errors.xml"`。在 Linux 上生成报告后，网页命令指向该 Linux 上的路径；移动 AiValgrind、工程或 XML 后应重新生成报告。
+
+如果外部工程尚不能导入本库，可在导入前执行 `sys.path.insert(0, "/实际路径/AiValgrind")`（先 `import sys`）；该目录应同时包含 `aivalgrind.py` 和 `inc/`。
+
 ```python
 from inc import DebugOptions, export_report, load_report, debug_error, serve_report
 
