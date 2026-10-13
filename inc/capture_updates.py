@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v40
+// aiv-stack-captures-v41
 (()=>{
  let running=true,timer,activeReplay=null,loadedRevision=null,probeRevision=null;const captures=new Map(),readableIds=new Set(),processed=new Map();
  const status=document.getElementById('capture-status');
@@ -135,7 +135,7 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v40 · '+(directChecks?'本行表达式 '+frame.line_checks.items.length+' 个（不是数组元素个数）'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v41 · '+(directChecks?'本行表达式 '+frame.line_checks.items.length+' 个（不是数组元素个数）'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
    for(const note of [frame.note,...(frame.inspection_errors||[]),!frame.source_line?.text&&frame.source_line?.note].filter(Boolean))add('p','采集说明：'+note).className='meta';
    if(directChecks){const rows=frame.line_checks.items,read=rows.filter(v=>v.status==='available').length,unknown=rows.filter(v=>['unknown','partial_check'].includes(v.initialization?.status||'unknown')).length;
     add('p','表达式读取成功 '+read+' / '+rows.length+' 个；未读到 '+(rows.length-read)+' 个；初始化检查不完整或未知 '+unknown+' 个。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'数组成员实际检查数量见下方区间检查。仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
@@ -273,6 +273,8 @@ SCRIPT = r'''
     lines.push('本次访问的内存块参考（字节偏移，不是变量下标）');
     lines.push(memory.range_evidence_version===2?memory.range_explanation:(memory.range_explanation&&memory.block_bytes!==undefined?'旧现场未保存地址与内存块的对应依据，不采用旧的范围计算；请重新执行步骤三。':memory.range_explanation||'当前诊断未提供足够的内存块边界，无法确定合法访问范围。'));
     if(memory.range_evidence)lines.push('范围依据：'+memory.range_evidence);
+    if(memory.address_description)lines.push('原始地址描述：'+memory.address_description);
+    if(memory.missing_reason)lines.push('信息缺失原因：'+memory.missing_reason);
    }
    if(lines.length)add('p',lines.join('\n')).style.whiteSpace='pre-wrap';
    const basis=add('details','');basis.dataset.captureEvidence='yes';

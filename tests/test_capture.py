@@ -13,6 +13,15 @@ from inc import cli
 
 
 class CaptureTests(unittest.TestCase):
+    def test_location_address_survives_live_capture(self):
+        self.error = self.error.replace('Address 0x200', 'Location 0x200')
+        self.count = 1
+        self.collector.on_stop(None)
+        snapshot = json.loads((self.root / 'error-0001.json').read_text(encoding='utf-8'))
+        self.assertEqual(snapshot['memory']['address'], '0x200')
+        self.assertEqual(snapshot['memory']['block_bytes'], 4)
+        self.assertEqual(snapshot['fault_analysis']['address'], '0x200')
+
     def test_fault_candidates_require_verified_top_frame_address(self):
         analyze = self.scope['analyze_fault_variables']
         item = {'name': 'arr[i].member', 'storage': {'address':'0x100', 'size_bytes':4}}

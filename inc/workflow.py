@@ -18,6 +18,47 @@ from .processes import ProcessSession
 from .output import prepare_output, prepare_capture_output
 from .terminal import ReportProgress
 from .store import load_replay
+from .memory_diagnostics import memory_facts, analyze_fault_variables
+
+
+def repair_snapshot_diagnostics(snapshot):
+    if not snapshot.get('valgrind_error'):
+        return False
+    parsed = memory_facts(snapshot['valgrind_error'], snapshot.get('address_details', ''))
+    if not parsed.get('access'):
+        return False
+    before = (snapshot.get('memory'), snapshot.get('fault_analysis'))
+    snapshot['memory'] = parsed
+    snapshot['fault_analysis'] = analyze_fault_variables(snapshot)
+    return before != (snapshot['memory'], snapshot['fault_analysis'])
+
+
+def repair_saved_diagnostics(directory):
+    path = directory / 'capture-updates.js'
+    content = path.read_text(encoding='utf-8')
+    match = re.fullmatch(r'\s*window\.aivCaptureUpdate\((.*)\);\s*', content, re.S)
+    if not match:
+        return
+    try:
+        payload = json.loads(match.group(1))
+    except ValueError:
+        return
+    changed = False
+    for item in payload.get('items', []):
+        if isinstance(item.get('snapshot'), dict) and repair_snapshot_diagnostics(item['snapshot']):
+            item['revision'] = hashlib.sha256(json.dumps(item['snapshot'], ensure_ascii=True).encode()).hexdigest()
+            changed = True
+    if not changed:
+        return
+    payload.pop('update_revision', None)
+    revision = hashlib.sha256(json.dumps(payload, ensure_ascii=True).encode()).hexdigest()
+    payload['update_revision'] = revision
+    temporary = path.with_suffix('.js.tmp')
+    temporary.write_text('window.aivCaptureUpdate('+json.dumps(payload,ensure_ascii=True).replace('<','\\u003c')+');',encoding='utf-8')
+    temporary.replace(path)
+    progress = directory / 'capture-progress.js.tmp'
+    progress.write_text('window.aivCaptureCheck('+json.dumps({'revision':revision})+');',encoding='utf-8')
+    progress.replace(directory / 'capture-progress.js')
 
 
 def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=None, stdin_file=None, live_port=None,
@@ -180,6 +221,7 @@ def save_combined_report(report, directory, *, base_html=None, previous=(), live
         try:
             snapshot_text = path.with_suffix('.json').read_text(encoding='utf-8')
             item['snapshot'] = json.loads(snapshot_text)
+            repair_snapshot_diagnostics(item['snapshot'])
             item['revision'] = hashlib.sha256(snapshot_text.encode('utf-8')).hexdigest()
         except (OSError, ValueError):
             pass
@@ -194,7 +236,7 @@ def save_combined_report(report, directory, *, base_html=None, previous=(), live
     progress_file = directory / 'capture-progress.js.tmp'
     progress_file.write_text('window.aivCaptureCheck(' + json.dumps({'revision': revision}) + ');', encoding='utf-8')
     progress_file.replace(directory / 'capture-progress.js')
-    refresh_capture_report(directory, base_html=base_html, report=report)
+    refresh_capture_report(directory, base_html=base_html, report=report, repair_diagnostics=False)
 
 
 def strip_capture_sections(content):
@@ -231,11 +273,13 @@ def strip_capture_sections(content):
     return content
 
 
-def refresh_capture_report(directory, *, base_html=None, report=None):
+def refresh_capture_report(directory, *, base_html=None, report=None, repair_diagnostics=True):
     """Upgrade the viewer without rerunning the target or rewriting captured values."""
     directory = Path(directory).resolve()
     if not (directory / 'capture-updates.js').is_file():
         raise ValueError('缺少步骤三变量文件 capture-updates.js：' + str(directory))
+    if repair_diagnostics:
+        repair_saved_diagnostics(directory)
     output = directory / 'full-report.html'
     replacing_base = bool(base_html and output.exists() and report_key(output.read_text(encoding='utf-8')) != report_key(base_html))
     if replacing_base:
@@ -249,7 +293,7 @@ def refresh_capture_report(directory, *, base_html=None, report=None):
     else:
         content = (directory / 'report.html').read_text(encoding='utf-8')
     viewer_versions = re.findall(r'// aiv-stack-captures-v\d+', content)
-    if viewer_versions == ['// aiv-stack-captures-v40']:
+    if viewer_versions == ['// aiv-stack-captures-v41']:
         return
     from .templates import SOURCE_VIEW_STYLE, STACK_SCROLL_FUNCTION, SELECT_ERROR_FUNCTION, FILTER_STATE_SCRIPT
     if 'id="report-data"' in content:

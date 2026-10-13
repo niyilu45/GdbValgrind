@@ -16,7 +16,7 @@ def allocation_location(address, budget):
         output = capture_execute('monitor v.info location ' + hex(address))
         result['evidence'] = output[:2048]
         # A nearby block or another address's description is not ownership.
-        pattern = r'Address\s+(0x[0-9a-f]+)\s+is\s+([\d,]+) bytes inside a block of size ([\d,]+)\s+(alloc\S*|free\S*)'
+        pattern = r'\b(?:Address|Location)\s+(0x[0-9a-f]+)\s+is\s+([\d,]+) bytes inside a block of size ([\d,]+)\s+(alloc\S*|free\S*)'
         matches = []
         for match in re.finditer(pattern, output, re.I):
             actual, offset, size, state = match.groups()

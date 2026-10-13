@@ -326,7 +326,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v40'));
+assert(lineText.includes('变量查看器 v41'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.
