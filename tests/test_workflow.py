@@ -73,13 +73,25 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual(main(['refresh-captures', '--output-dir', root]), 0)
                 debug.assert_not_called()
             html = (directory/'full-report.html').read_text(encoding='utf-8')
-            self.assertIn('aiv-stack-captures-v43', html)
+            self.assertIn('aiv-stack-captures-v44', html)
             self.assertNotRegex(html, r'aiv-stack-captures-v4\b')
             self.assertIn('<p>source</p>', html)
             self.assertEqual(html.count('id="capture-results"'), 1)
             self.assertEqual((directory/'capture-updates.js').read_bytes(), sidecar)
             workflow.refresh_capture_report(directory)
             self.assertEqual((directory/'full-report.html').read_text(encoding='utf-8'), html)
+
+    def test_refresh_replaces_stale_viewer_even_with_current_version_label(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            (directory/'capture-updates.js').write_text('window.aivCaptureUpdate({live:false,items:[]});',encoding='utf-8')
+            path = directory/'full-report.html'
+            path.write_text('<html><body><p>source</p><script>// aiv-stack-captures-v44\nconst old="报错指令、寄存器及实际启用的精度（查看依据）";</script></body></html>',encoding='utf-8')
+            workflow.refresh_capture_report(directory)
+            content = path.read_text(encoding='utf-8')
+            self.assertNotIn('报错指令、寄存器及实际启用的精度', content)
+            self.assertIn('<p>source</p>', content)
+            self.assertEqual(content.count('// aiv-stack-captures-v44'), 1)
 
     def test_append_preserves_previous_files_and_report_bytes(self):
         from inc.output import prepare_capture_output, write_manifest

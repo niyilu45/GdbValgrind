@@ -72,6 +72,7 @@ def main(argv=None):
                                  ' 缺少 refresh_capture_report。请将项目根目录脚本及整个 inc 目录更新到同一版本后重试；无需安装额外库。')
             refresh_report(args.output_dir)
             print('已更新变量查看功能，请重新打开：' + str(args.output_dir.resolve() / 'full-report.html'))
+            print('已有网页不会自动换成新查看器；请刷新该文件对应的页面（HTTP 浏览可用 Ctrl+F5）。无需重新执行步骤三。')
             return 0
         runtime_info = print_tool_versions(args.action, debug_enabled=args.action == 'serve' and bool(command))
         if args.action == 'analyze':

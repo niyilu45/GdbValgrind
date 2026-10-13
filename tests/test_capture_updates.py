@@ -185,6 +185,9 @@ const faultText=lineSummary('fault(value);',[],[],'fault(value);',null,{},null,{
  instruction_context:{instruction:'mov 0x8(%rax,%rcx,4),%edx',registers:'rcx 26',operands:[{operand:'0x8(%rax,%rcx,4)',address:'0x170',matches_fault_address:true,registers_precise:true,base_register:'rax',base_value:'0x100',index_register:'rcx',index_value:26,scale:4,displacement:8}],access_check:{address:'0x170',queried_bytes:8,requested_bytes:8,complete:true,unaddressable_offsets:[4,5,6,7],undefined_offsets:[],raw:'00000000________'}}});
 assert(faultText.includes('实际报错栈顶 #0'));assert(!faultText.includes('valgrind-3.22.0'));assert(!faultText.includes('rcx=26'));assert(!faultText.includes('报错指令、寄存器'));assert(!faultText.includes('allregs-at-each-insn'));assert(faultText.includes('候选表达式：value'));assert(faultText.includes('访问长度超过该表达式'));
 // Real initialization results include $self for scalars and scalar members.
+const thisText=lineSummary('this->field;',[],[],'this->field;',[{name:'this',status:'available',value:'0x9999',initialization:{status:'defined',complete:true}}],{named_object:{name:'this'}},null,{
+ fault_analysis:{note:'pointer storage',address:'0x100',last_address:'0x107',access_bytes:8,cause:'stack',candidates:[],named_object:{name:'this',size_bytes:8,actual_offset:0,exceeds_storage:false}}});
+assert(thisText.includes('不是 this 指向的对象'));assert(thisText.includes('已核对变量 this'));assert(thisText.includes('不能用下标越界解释'));
 const boundaryText=lineSummary('boundary(value);',[],[],'boundary(value);',null,{missing_reason:'NO_BOUNDARY',range_explanation:'UNKNOWN_RANGE'},null,{
  fault_analysis:{note:'one candidate',address:'0x1d4',last_address:'0x1d7',access_bytes:4,cause:'old generic',candidates:[],boundary_findings:[{expression:'arr[i].member',kind:'out_of_allocation',outside_bytes:4,index_expression:'i',actual_index:26,block_index_range:[0,25],block_bytes:208,actual_offset:212,access_bytes:4,valid_start_offsets:[0,204],stride:8,member_offset:4,base_address:'0x100',block_start:'0x100',block_end:'0x1cf',access_address:'0x1d4'}]}});
 assert(boundaryText.includes('i = 26'));assert(boundaryText.includes('可容纳的下标为 0～25'));assert(boundaryText.includes('4 字节落在范围外'));assert(boundaryText.includes('建议检查：索引计算'));assert(!boundaryText.includes('NO_BOUNDARY'));assert(!boundaryText.includes('UNKNOWN_RANGE'));
@@ -329,7 +332,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v43'));
+assert(lineText.includes('变量查看器 v44'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.

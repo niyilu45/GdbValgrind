@@ -502,6 +502,17 @@ class AutoValueCapture:
                 if 'block_bytes' not in snapshot['memory']:
                     snapshot['memory'] = memory_facts(message, snapshot['address_details'])
             frame = gdb.newest_frame()
+            named = snapshot['memory'].get('named_object', {})
+            if frame and named.get('name'):
+                try:
+                    value = frame.read_var(named['name'])
+                    snapshot['named_object_check'] = {'name':named['name'], 'frame':0,
+                        'address':hex(int(value.address)), 'size_bytes':int(value.type.sizeof),
+                        'type':str(value.type), 'value':value.format_string(raw=True)[:4096]}
+                except Exception as exc:
+                    if disconnected(str(exc)):
+                        raise CaptureDisconnected(str(exc))
+                    snapshot['named_object_check'] = {'name':named['name'], 'error':str(exc)}
             snapshot['precision'] = _capture_config.get('precision', {})
             snapshot['instruction_context'] = capture_fault_context(frame, snapshot['memory'], snapshot['precision']) if frame else {}
             initialization_budget = {'queries': 256, 'bytes': 32768}

@@ -8,6 +8,19 @@ from inc.workflow import repair_saved_diagnostics
 
 
 class MemoryDiagnosticsTests(unittest.TestCase):
+    def test_this_is_pointer_storage_not_pointee_and_requires_address_match(self):
+        memory = memory_facts('Invalid read of size 8\nLocation 0x100 is 0 bytes inside local var "this"')
+        self.assertEqual(memory['named_object']['name'], 'this')
+        snapshot = {'association':{'status':'verified'}, 'memory':memory, 'frames':[],
+                    'named_object_check':{'name':'this','address':'0x100','size_bytes':8,'value':'0x9999'}}
+        result = analyze_fault_variables(snapshot)
+        self.assertFalse(result['named_object']['exceeds_storage'])
+        self.assertEqual(result['named_object']['address'],'0x100')
+        snapshot['memory']['access_bytes'] = 16
+        self.assertEqual(analyze_fault_variables(snapshot)['named_object']['outside_bytes'],8)
+        snapshot['named_object_check']['address'] = '0x9999'
+        self.assertNotIn('named_object',analyze_fault_variables(snapshot))
+
     def pointer_snapshot(self, size=208, width=4, state='allocated'):
         block = {'address':'0x100','start':256,'size':size,'status':state,
                  'evidence':"Address 0x100 is 0 bytes inside a block of size %d %s" % (size,"free'd" if state=='freed' else "alloc'd")}

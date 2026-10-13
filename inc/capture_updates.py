@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v43
+// aiv-stack-captures-v44
 (()=>{
  let running=true,timer,activeReplay=null,loadedRevision=null,probeRevision=null;const captures=new Map(),readableIds=new Set(),processed=new Map();
  const status=document.getElementById('capture-status');
@@ -90,9 +90,10 @@ SCRIPT = r'''
   const prefixAbnormal=(v.index_accesses||[]).some(a=>a.prefix_check?.ranges?.some(r=>['undefined','unaddressable','out_of_bounds'].includes(r.status))||['outside_block','freed','target_freed'].includes(a.prefix_check?.allocation?.status));
   const prefixUnknown=(v.index_accesses||[]).some(a=>a.prefix_check&&(!a.prefix_check.coverage_complete||a.prefix_check.ranges?.some(r=>['unknown','unchecked'].includes(r.status))||(a.prefix_check.range_basis==='index_probe'&&(!a.prefix_check.allocation||a.prefix_check.allocation.status==='unknown'))));
   const valueState=variableState(info.observed_status||info.status,v.status,info.complete);
-  const overall=indexAbnormal||prefixAbnormal||valueState==='abnormal'?'abnormal':prefixUnknown?'uncertain':valueState;
+  const overall=v.reportedAccess||indexAbnormal||prefixAbnormal||valueState==='abnormal'?'abnormal':prefixUnknown?'uncertain':valueState;
   lines.push({text:'\n'+v.name+(v.type?'（'+v.type+'）':'')+' · '+(v.role==='argument'?'函数参数':v.role==='source_expression'?'本行表达式逐项读取':'局部变量'),state:overall});
   if(v.macro_expansion)lines.push('当前源码位置的宏展开：'+v.macro_expansion);
+  if(v.reportedAccess)lines.push({text:'本次非法访问地址落在此表达式的存储中；初始化检查通过不能将它判为正常。',state:'abnormal'});
   for(const [position,raw] of (v.index_accesses||[]).entries()){
    const access=indexLabel(raw,v.name,v.index_accesses,position);
    lines.push('下标 '+(access.index_expression||'无法唯一对应（旧现场缺少名称，请重新采集）')+' = '+(access.actual_index??'未知')+'；'+(access.base_expression||'该数组')+' 的下标范围 '+(access.bounds?access.bounds.join('～')+'（元素索引）':'未知（没有可确认的数组边界）'));
@@ -135,7 +136,7 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v43 · '+(directChecks?'本行表达式 '+frame.line_checks.items.length+' 个（不是数组元素个数）'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v44 · '+(directChecks?'本行表达式 '+frame.line_checks.items.length+' 个（不是数组元素个数）'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
    for(const note of [frame.note,...(frame.inspection_errors||[]),!frame.source_line?.text&&frame.source_line?.note].filter(Boolean))add('p','采集说明：'+note).className='meta';
    if(directChecks){const rows=frame.line_checks.items,read=rows.filter(v=>v.status==='available').length,unknown=rows.filter(v=>['unknown','partial_check'].includes(v.initialization?.status||'unknown')).length;
     add('p','表达式读取成功 '+read+' / '+rows.length+' 个；未读到 '+(rows.length-read)+' 个；初始化检查不完整或未知 '+unknown+' 个。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'数组成员实际检查数量见下方区间检查。仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
@@ -146,6 +147,12 @@ SCRIPT = r'''
     add('h4','非法访问与变量定位（实际报错栈顶 #0，不是调用者变量）');
     add('p',fault?.note||'旧现场未保存访问地址与变量的对应分析，请重新执行步骤三；变量检查通过不能排除本次非法访问。');
     if(fault?.address){
+     const named=saved.snapshot.memory?.named_object,obj=fault.named_object;
+     if(named?.name==='this')add('p','Valgrind 指向的是 this 指针变量自身的存储位置，不是 this 指向的对象；需要分别判断。');
+     if(obj){
+      colorState(add('p','已核对变量 '+obj.name+'：变量自身占 '+obj.size_bytes+' 字节；本次从偏移 '+obj.actual_offset+' 字节开始访问 '+obj.access_bytes+' 字节。'),'abnormal');
+      add('p',obj.exceeds_storage?'本次访问超过变量自身的存储范围，超出 '+obj.outside_bytes+' 字节。':'本次访问未超出变量自身大小；不能用下标越界解释，也不能据此判为正常。仍需核查该栈存储在报错时是否有效。');
+     }else if(named)add('p','原始诊断指向变量 '+named.name+'，但尚未通过当前帧的变量地址核对，不能把它等同于本行其他变量。');
      colorState(add('p','本次'+(e.kind==='InvalidRead'?'读取':'写入')+' '+fault.access_bytes+' 字节，被 Valgrind 判定为非法访问。'),'abnormal');
      if(!(fault.boundary_findings||[]).length)add('p','目前能确认：'+fault.cause);
      for(const finding of fault.boundary_findings||[]){
@@ -193,6 +200,7 @@ SCRIPT = r'''
    for(const original of (directChecks?frame.line_checks.items:frame.variables)||[]){
     if(!onLine(original.name))continue;
     const v={...original,initialization:{...original.initialization}};
+    v.reportedAccess=frame.index===0&&((saved.snapshot.fault_analysis?.candidates||[]).some(c=>c.name===v.name)||saved.snapshot.fault_analysis?.named_object?.name===v.name);
     const members=v.member_details?.members||v.initialization.member_states?.filter(m=>m.name!=='$self');
     // Scalars (including scalar struct fields) have a $self initialization
     // entry. Filtering it produces [], which is truthy in JavaScript.

@@ -16,6 +16,9 @@ def memory_facts(message, location=''):
     # An auxiliary address must not supply a block size for the fault address.
     address_line = message[address.start():].split('\n', 1)[0] if address else ''
     facts['address_description'] = address_line.strip()
+    local = re.search(r'is\s+([\d,]+) bytes? inside (local|global) var\s+["\']?([A-Za-z_$][\w$]*)', address_line)
+    if local:
+        facts['named_object'] = {'name':local.group(3), 'scope':local.group(2), 'offset':int(local.group(1).replace(',',''))}
     block_pattern = r'([\d,]+) bytes? (after|before|inside) a block of size ([\d,]+)\s+(alloc\S*|free\S*)'
     block = re.search(block_pattern, address_line, re.I)
     # Only enrich an address already identified in this error. A lookup must
@@ -155,6 +158,20 @@ def analyze_fault_variables(snapshot):
     result.update(address=hex(address), access_bytes=width,
                   last_address=hex(address+width-1), cause=memory.get('explanation', '现有诊断不足以确定越界或释放原因。'))
     result['boundary_findings'] = fault_boundary_findings(snapshot, address, width)
+    named = snapshot.get('named_object_check', {})
+    if not named.get('address') and snapshot.get('frames'):
+        matches = [v for v in snapshot['frames'][0].get('variables', []) if v.get('name') == memory.get('named_object',{}).get('name')]
+        if len(matches) == 1:
+            variable = matches[0]
+            named = dict(variable.get('storage') or variable.get('initialization',{}), name=variable['name'])
+    try:
+        start, size = int(named['address'],16), int(named['size_bytes'])
+        if size > 0 and start <= address < start+size and named.get('name') == memory.get('named_object',{}).get('name'):
+            result['named_object'] = dict(named, actual_offset=address-start, access_bytes=width,
+                exceeds_storage=address+width > start+size,
+                outside_bytes=max(0,address+width-(start+size)))
+    except (KeyError, TypeError, ValueError):
+        pass
     if len(result['boundary_findings']) == 1:
         result['cause'] = result['boundary_findings'][0]['explanation']
     context = snapshot.get('instruction_context', {})
