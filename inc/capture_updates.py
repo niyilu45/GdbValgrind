@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v45
+// aiv-stack-captures-v46
 (()=>{
  let running=true,timer,activeReplay=null,loadedRevision=null,probeRevision=null;const captures=new Map(),readableIds=new Set(),processed=new Map();
  const status=document.getElementById('capture-status');
@@ -84,18 +84,17 @@ SCRIPT = r'''
   if(matching.length===1&&(local.length===1||!accesses||access.base_expression))return {...access,...matching[0]};
   return access;
  }
- function accessState(v,state){return v.invalidAccessContext&&state==='normal'?'uncertain':state}
  function variableLines(v){
   const info=v.initialization||{},details=v.member_details;
   const lines=[];const indexAbnormal=(v.index_accesses||[]).some(a=>a.bounds&&a.actual_index!==null&&(a.actual_index<a.bounds[0]||a.actual_index>a.bounds[1]));
   const prefixAbnormal=(v.index_accesses||[]).some(a=>a.prefix_check?.ranges?.some(r=>['undefined','unaddressable','out_of_bounds'].includes(r.status))||['outside_block','freed','target_freed'].includes(a.prefix_check?.allocation?.status));
   const prefixUnknown=(v.index_accesses||[]).some(a=>a.prefix_check&&(!a.prefix_check.coverage_complete||a.prefix_check.ranges?.some(r=>['unknown','unchecked'].includes(r.status))||(a.prefix_check.range_basis==='index_probe'&&(!a.prefix_check.allocation||a.prefix_check.allocation.status==='unknown'))));
   const valueState=variableState(info.observed_status||info.status,v.status,info.complete);
-  const overall=v.reportedAccess||indexAbnormal||prefixAbnormal||valueState==='abnormal'?'abnormal':prefixUnknown||v.invalidAccessContext?'uncertain':valueState;
+  const overall=v.reportedAccess||indexAbnormal||prefixAbnormal||valueState==='abnormal'?'abnormal':prefixUnknown?'uncertain':valueState;
   lines.push({text:'\n'+v.name+(v.type?'（'+v.type+'）':'')+' · '+(v.role==='argument'?'函数参数':v.role==='source_expression'?'本行表达式逐项读取':'局部变量'),state:overall});
   if(v.macro_expansion)lines.push('当前源码位置的宏展开：'+v.macro_expansion);
   if(v.reportedAccess)lines.push({text:'本次非法访问地址落在此表达式的存储中；初始化检查通过不能将它判为正常。',state:'abnormal'});
-  else if(v.invalidAccessContext)lines.push({text:'与本次非法访问的关系尚未确认；下方仅说明初始化检查结果，不作“变量正常”的结论。',state:'uncertain'});
+  else if(v.invalidAccessContext)lines.push('错误关联：与本次非法访问的关系尚未确认；不影响下方已取得的检查结果。');
   for(const [position,raw] of (v.index_accesses||[]).entries()){
    const access=indexLabel(raw,v.name,v.index_accesses,position);
    lines.push('下标 '+(access.index_expression||'无法唯一对应（旧现场缺少名称，请重新采集）')+' = '+(access.actual_index??'未知')+'；'+(access.base_expression||'该数组')+' 的下标范围 '+(access.bounds?access.bounds.join('～')+'（元素索引）':'未知（没有可确认的数组边界）'));
@@ -111,7 +110,7 @@ SCRIPT = r'''
     const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;
     const init=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);
     const value=m.value===undefined?'旧现场未单独保存成员值':String(m.value);
-    lines.push({text:'  '+name+(m.type?'（'+m.type+'）':'')+' = '+value+'；'+(details&&m.status!=='available'?'无法读取':(initLabels[init]||'初始化状态无法确定')),state:accessState(v,variableState(init,details?m.status:undefined,info.complete))});
+    lines.push({text:'  '+name+(m.type?'（'+m.type+'）':'')+' = '+value+'；'+(details&&m.status!=='available'?'无法读取':(initLabels[init]||'初始化状态无法确定')),state:variableState(init,details?m.status:undefined,info.complete)});
     if(m.note)lines.push('    '+m.note);
    }
    if(details?.note)lines.push('展示范围：'+details.note);
@@ -138,7 +137,7 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v45 · '+(directChecks?'本行表达式 '+frame.line_checks.items.length+' 个（不是数组元素个数）'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v46 · '+(directChecks?'本行表达式 '+frame.line_checks.items.length+' 个（不是数组元素个数）'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
    for(const note of [frame.note,...(frame.inspection_errors||[]),!frame.source_line?.text&&frame.source_line?.note].filter(Boolean))add('p','采集说明：'+note).className='meta';
    if(directChecks){const rows=frame.line_checks.items,read=rows.filter(v=>v.status==='available').length,unknown=rows.filter(v=>['unknown','partial_check'].includes(v.initialization?.status||'unknown')).length;
     add('p','表达式读取成功 '+read+' / '+rows.length+' 个；未读到 '+(rows.length-read)+' 个；初始化检查不完整或未知 '+unknown+' 个。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'数组成员实际检查数量见下方区间检查。仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
@@ -244,7 +243,7 @@ SCRIPT = r'''
     const members=details?.members||v.initialization?.member_states?.filter(m=>m.name!=='$self');
     if(details||(members?.length||0)>0){
      let memberCount=0;
-     for(const m of members||[]){const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;if(!onLine(name))continue;const state=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);const row=add('span',(relatedCount+1)+'. '+name+(m.type?'（'+m.type+'）':'')+' = '+(m.value??'旧现场未单独保存成员值')+'；'+(initLabels[state]||'初始化状态无法确定'),group);row.style.display='block';colorState(row,accessState(v,variableState(state,details?m.status:undefined,v.initialization?.complete)));if(m.note){const note=add('span','说明：'+m.note,group);note.style.display='block'}memberCount++;relatedCount++}
+     for(const m of members||[]){const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;if(!onLine(name))continue;const state=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);const row=add('span',(relatedCount+1)+'. '+name+(m.type?'（'+m.type+'）':'')+' = '+(m.value??'旧现场未单独保存成员值')+'；'+(initLabels[state]||'初始化状态无法确定'),group);row.style.display='block';colorState(row,variableState(state,details?m.status:undefined,v.initialization?.complete));if(m.note){const note=add('span','说明：'+m.note,group);note.style.display='block'}memberCount++;relatedCount++}
      if(!memberCount){add('span',(relatedCount+1)+'. '+v.name+'：本行出现此对象，但没有可对应的成员值，不展开其他成员。\n',group);relatedCount++}
     }else{let first=true;for(const row of variableLines(v)){
      if(row.prefix){

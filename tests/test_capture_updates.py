@@ -195,7 +195,16 @@ const selfValue={name:'count',status:'available',value:'41',initialization:{stat
 const fieldValue={name:'rxvec->abc',status:'available',value:'73',initialization:{status:'undefined',complete:true,member_states:[{name:'$self',status:'undefined'}]}};
 let actualLine=lineSummary('use(count, rxvec->abc);', [], [], 'use(count, rxvec->abc);', [selfValue,fieldValue]);
 assert(actualLine.includes('实际值：41'));assert(actualLine.includes('实际值：73'));
-assert(actualLine.includes('【不确定】1. count'));assert(actualLine.includes('【异常】2. rxvec->abc'));
+assert(actualLine.includes('【已检查部分通过】1. count'));assert(actualLine.includes('【异常】2. rxvec->abc'));
+for(const kind of ['InvalidRead','InvalidWrite']){
+ report.errors[1].kind=kind;
+ const text=lineSummary(kind+'(count, rxvec->abc, missing);',[],[],kind+'(count, rxvec->abc, missing);',[selfValue,fieldValue,{name:'missing',status:'unavailable',value:'optimized out',initialization:{status:'unknown'}}]);
+ assert(text.includes('【已检查部分通过】1. count'));
+ assert(text.includes('【异常】2. rxvec->abc'));
+ assert(text.includes('【不确定】3. missing'));
+ assert(text.includes('错误关联：与本次非法访问的关系尚未确认'));
+}
+report.errors[1].kind='InvalidWrite';
 assert(actualLine.includes('检查结果：未初始化'));assert(!actualLine.includes('未采集到可直接对应'));
 assert(actualLine.includes('检查地址 0x1234'));assert(actualLine.includes('检查 4 / 4 字节'));
 assert(actualLine.includes('本行变量分析（含异常核查）'));
@@ -332,7 +341,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v45'));
+assert(lineText.includes('变量查看器 v46'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.
