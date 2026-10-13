@@ -134,6 +134,8 @@ def check_array_prefix(base, index, low, high, budget, member_path=(), dynamic=F
                         raise ValueError('尾部数组探测地址不可用或溢出，不继续查询')
             cache = budget.setdefault('array_prefix_cache', {})
             result['target_storage'] = {'address': hex(address+(index-low)*stride+member_offset), 'size_bytes': width}
+            result['address_calculation'] = {'base_address':hex(address), 'index':index,
+                'lower_bound':low, 'stride':stride, 'member_offset':member_offset}
             cache_key = (address, str(element), stride, low, high, index, tuple(member_path), member_offset, width, dynamic)
             if cache_key in cache:
                 cached = deepcopy(cache[cache_key])
@@ -359,6 +361,7 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                 return node.value
             if isinstance(node, ast.Attribute):
                 value = read(node.value, depth+1)
+                pointer_origin = None
                 if value.type.strip_typedefs().code in (getattr(gdb, 'TYPE_CODE_REF', -1), getattr(gdb, 'TYPE_CODE_RVALUE_REF', -2)):
                     value = value.referenced_value()
                 kind = value.type.strip_typedefs().code
@@ -366,11 +369,27 @@ def _check_source_expressions(frame, source, budget, macro_scope=False):
                     info = check_initialization(value, budget)
                     if info.get('observed_status', info['status']) in ('undefined', 'partially_undefined', 'unaddressable'):
                         raise ValueError('指针自身未初始化或不可访问，不读取其成员')
+                    if info.get('status') == 'defined' and info.get('complete') is not False:
+                        try:
+                            pointer_origin = {'expression':getattr(node, '_aiv_label', ''),
+                                              'base_address':hex(int(value)),
+                                              'allocation':allocation_location(int(value), budget)}
+                        except Exception as exc:
+                            if disconnected(str(exc)):
+                                raise CaptureDisconnected(str(exc))
                     value = value.dereference()
                     kind = value.type.strip_typedefs().code
                 if kind != gdb.TYPE_CODE_STRUCT:
                     raise ValueError('不是可直接读取的结构体成员')
-                return value[node.attr]
+                member = value[node.attr]
+                try:
+                    if pointer_origin is not None and member.address is not None:
+                        pointer_origin['target_storage'] = {'address':hex(int(member.address)), 'size_bytes':int(member.type.sizeof)}
+                        row.setdefault('pointer_targets', []).append(pointer_origin)
+                except Exception as exc:
+                    if disconnected(str(exc)):
+                        raise CaptureDisconnected(str(exc))
+                return member
             if isinstance(node, ast.Subscript):
                 base = read(node.value, depth+1)
                 if base.type.strip_typedefs().code in (getattr(gdb, 'TYPE_CODE_REF', -1), getattr(gdb, 'TYPE_CODE_RVALUE_REF', -2)):

@@ -255,6 +255,9 @@ class CaptureTests(unittest.TestCase):
         self.assertIsNone(probe['bounds'])
         self.assertEqual(probe['checked_elements'],27)
         self.assertEqual(probe['checked_bytes'],108)
+        self.assertEqual(probe['address_calculation']['index'],26)
+        self.assertEqual(probe['address_calculation']['base_address'],'0x100')
+        self.assertEqual(probe['address_calculation']['stride'],8)
         self.assertEqual(dynamic['status'],'available')
         # An unaddressable selected member is never read through GDB.Value.
         data[26*8:26*8+4] = ['__']*4
@@ -570,7 +573,7 @@ class CaptureTests(unittest.TestCase):
         boundary=facts('Invalid read of size 4\nAddress 0x1010 is 0 bytes after a block of size 16 alloc\'d')
         self.assertEqual(boundary['valid_start_addresses'],['0x1000','0x100c'])
         unknown=facts('Invalid write of size 8\nAddress 0x0 is not stack\'d, malloc\'d or free\'d')
-        self.assertIn('合法范围未知',unknown['range_explanation'])
+        self.assertIn('空地址',unknown['range_explanation'])
         self.assertIn('0x0',unknown['range_explanation'])
         unrelated=facts('Invalid write of size 1\nAddress 0x0 is not stack\'d\nAddress 0x300 is 0 bytes inside a block of size 288 alloc\'d')
         self.assertNotIn('block_bytes', unrelated)

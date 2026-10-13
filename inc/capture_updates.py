@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v41
+// aiv-stack-captures-v43
 (()=>{
  let running=true,timer,activeReplay=null,loadedRevision=null,probeRevision=null;const captures=new Map(),readableIds=new Set(),processed=new Map();
  const status=document.getElementById('capture-status');
@@ -135,7 +135,7 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v41 · '+(directChecks?'本行表达式 '+frame.line_checks.items.length+' 个（不是数组元素个数）'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v43 · '+(directChecks?'本行表达式 '+frame.line_checks.items.length+' 个（不是数组元素个数）'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
    for(const note of [frame.note,...(frame.inspection_errors||[]),!frame.source_line?.text&&frame.source_line?.note].filter(Boolean))add('p','采集说明：'+note).className='meta';
    if(directChecks){const rows=frame.line_checks.items,read=rows.filter(v=>v.status==='available').length,unknown=rows.filter(v=>['unknown','partial_check'].includes(v.initialization?.status||'unknown')).length;
     add('p','表达式读取成功 '+read+' / '+rows.length+' 个；未读到 '+(rows.length-read)+' 个；初始化检查不完整或未知 '+unknown+' 个。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'数组成员实际检查数量见下方区间检查。仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
@@ -146,34 +146,27 @@ SCRIPT = r'''
     add('h4','非法访问与变量定位（实际报错栈顶 #0，不是调用者变量）');
     add('p',fault?.note||'旧现场未保存访问地址与变量的对应分析，请重新执行步骤三；变量检查通过不能排除本次非法访问。');
     if(fault?.address){
-     colorState(add('p','实际非法访问：'+fault.address+'～'+fault.last_address+'，'+fault.access_bytes+' 字节。'),'abnormal');
-     add('p','诊断原因：'+fault.cause);
-     add('p',fault.instruction_address_verified?'指令寻址结果与报错地址一致，且已启用精确寄存器更新。':'尚未完成指令寻址与报错地址的可靠核对；下面仅为存储地址候选。');
+     colorState(add('p','本次'+(e.kind==='InvalidRead'?'读取':'写入')+' '+fault.access_bytes+' 字节，被 Valgrind 判定为非法访问。'),'abnormal');
+     if(!(fault.boundary_findings||[]).length)add('p','目前能确认：'+fault.cause);
+     for(const finding of fault.boundary_findings||[]){
+      add('h4','检查对象：'+finding.expression);
+      const bad=['out_of_allocation','use_after_free'].includes(finding.kind);
+      colorState(add('p',finding.kind==='use_after_free'?'问题：指针指向的内存已经释放，仍在通过它访问数据。':finding.kind==='out_of_allocation'?'问题：超出了该指针所在的已申请内存，本次访问有 '+finding.outside_bytes+' 字节落在范围外。':'尚未定位原因：本次访问没有超出该指针所在的分配空间，但仍不能认定该变量正常。'),bad?'abnormal':'uncertain');
+      if(finding.actual_index!==undefined)add('p','当前值：'+(finding.index_expression||'下标')+' = '+finding.actual_index+'；按当前分配空间和本次访问长度，可容纳的下标为 '+(finding.block_index_range?finding.block_index_range.join('～'):'无')+'。业务允许范围还需结合程序逻辑。');
+      add('p',finding.kind==='use_after_free'?'建议检查：谁释放了这块内存，以及释放后是否仍保留或使用这个指针。':finding.kind==='out_of_allocation'?'建议检查：索引计算、循环结束条件，以及实际申请的元素数量是否足够。':'建议继续检查：对象是否仍有效、成员范围，以及程序是否主动将该内存标记为不可访问。');
+      const basis=add('details','');add('summary','判断依据（展开查看）',basis);
+      add('p','实际申请 '+finding.block_bytes+' 字节；本次访问 '+finding.access_bytes+' 字节，从偏移 '+finding.actual_offset+' 字节开始。可容纳此次访问的起始偏移：'+(finding.valid_start_offsets?finding.valid_start_offsets.join('～')+' 字节':'无')+'。',basis);
+      if(finding.actual_index!==undefined)add('p','每个元素占 '+finding.stride+' 字节，目标成员在元素内偏移 '+finding.member_offset+' 字节。',basis);
+      add('p','基址 '+finding.base_address+'；分配块 '+finding.block_start+'～'+finding.block_end+'；实际访问地址 '+finding.access_address+'。',basis);
+     }
+     if(fault.boundary_note)add('p',fault.boundary_note);
      for(const c of fault.candidates||[]){
-      add('p','候选表达式：'+c.name+'；存储起点 '+c.address+'，大小 '+c.size_bytes+' 字节；本次访问从其偏移 '+c.offset_bytes+' 字节开始。');
+      if((fault.boundary_findings||[]).some(f=>f.expression===c.name))continue;
+      add('p','候选表达式：'+c.name+'；该变量或成员占 '+c.size_bytes+' 字节，本次访问从其中第 '+c.offset_bytes+' 字节开始。');
       if(c.exceeds_expression)colorState(add('p','访问长度超过该表达式的存储范围。这是地址范围证据，尚不能排除编译器合并访问或别名。'),'uncertain');
      }
     }
-    const ctx=saved.snapshot.instruction_context,precision=saved.snapshot.precision;
-    if(precision?.version)add('p','本次采集 Valgrind：'+precision.version+'；寄存器精度：'+precision.register_precision);
-    if(ctx){
-     const proof=add('details','');add('summary','报错指令、寄存器及实际启用的精度（查看依据）',proof);
-     add('pre',ctx.instruction||'未获取指令',proof).style.whiteSpace='pre-wrap';
-     for(const op of ctx.operands||[]){
-      add('p',op.operand+' → '+op.address+'；'+(op.matches_fault_address?'与 Valgrind 报错地址一致':'与 Valgrind 报错地址不一致')+(op.registers_precise?'':'；寄存器精度未确认，不能据此定位'),proof);
-      add('p','寻址依据：基址 '+op.base_register+'='+op.base_value+'；索引 '+(op.index_register||'无')+'='+op.index_value+'；步长 '+op.scale+'；偏移 '+op.displacement,proof);
-     }
-     add('p',ctx.note||'',proof);if(ctx.error)add('p','指令采集不完整：'+ctx.error,proof);
-     const check=ctx.access_check;
-     if(check){
-      add('p','直接核查报错地址 '+check.address+'：查询 '+check.queried_bytes+' / '+check.requested_bytes+' 字节（独立于变量初始化检查）。',proof);
-      if(check.error)add('p','未能解析有效位：'+check.error,proof);
-      else add('p','不可访问字节数 '+check.unaddressable_offsets.length+'；未初始化字节数 '+check.undefined_offsets.length+'；'+(check.complete?'已覆盖本次访问长度':'仅部分覆盖')+'。本次查询不能否定原始 Valgrind 错误。',proof);
-      add('pre',check.raw,proof).style.whiteSpace='pre-wrap';
-     }
-     add('pre',ctx.registers||'未获取寄存器',proof).style.whiteSpace='pre-wrap';
-     add('pre',(precision?.options||[]).join('\n')+'\n'+(precision?.skipped||[]).join('\n'),proof).style.whiteSpace='pre-wrap';
-    }
+
    }
    add('p','所属报告错误：'+e.id+' · 采集现场：'+(saved.captureId||'旧数据未提供现场文件名')).className='meta';
    if(e.records>1)add('p','本项合并了 '+e.records+' 条原始错误记录；以下仅来自上面标明的一次现场，不合并不同现场的变量值。').className='meta';
@@ -269,12 +262,16 @@ SCRIPT = r'''
    const lines=[];
    if(node.dataset.frameKey===saved.frames.keys().next().value){
     const memory=saved.snapshot.memory||{};
+    const recovered=(saved.snapshot.fault_analysis?.boundary_findings||[]).length>0&&memory.block_bytes===undefined;
+    if(recovered)lines.push('已从对应表达式的基址指针取得分配信息，具体范围与实际访问对比见上方。');
+    if(!recovered){
     if(memory.explanation)lines.push(memory.explanation);
-    lines.push('本次访问的内存块参考（字节偏移，不是变量下标）');
+    lines.push(memory.block_bytes!==undefined?'本次访问的内存块参考（字节偏移，不是变量下标）':'本次访问地址与对象归属');
     lines.push(memory.range_evidence_version===2?memory.range_explanation:(memory.range_explanation&&memory.block_bytes!==undefined?'旧现场未保存地址与内存块的对应依据，不采用旧的范围计算；请重新执行步骤三。':memory.range_explanation||'当前诊断未提供足够的内存块边界，无法确定合法访问范围。'));
     if(memory.range_evidence)lines.push('范围依据：'+memory.range_evidence);
     if(memory.address_description)lines.push('原始地址描述：'+memory.address_description);
     if(memory.missing_reason)lines.push('信息缺失原因：'+memory.missing_reason);
+    }
    }
    if(lines.length)add('p',lines.join('\n')).style.whiteSpace='pre-wrap';
    const basis=add('details','');basis.dataset.captureEvidence='yes';

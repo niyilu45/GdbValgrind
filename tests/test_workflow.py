@@ -73,7 +73,7 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual(main(['refresh-captures', '--output-dir', root]), 0)
                 debug.assert_not_called()
             html = (directory/'full-report.html').read_text(encoding='utf-8')
-            self.assertIn('aiv-stack-captures-v41', html)
+            self.assertIn('aiv-stack-captures-v43', html)
             self.assertNotRegex(html, r'aiv-stack-captures-v4\b')
             self.assertIn('<p>source</p>', html)
             self.assertEqual(html.count('id="capture-results"'), 1)
