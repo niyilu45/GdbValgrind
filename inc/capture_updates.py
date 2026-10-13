@@ -2,7 +2,7 @@
 
 SCRIPT = r'''
 <script>
-// aiv-stack-captures-v44
+// aiv-stack-captures-v45
 (()=>{
  let running=true,timer,activeReplay=null,loadedRevision=null,probeRevision=null;const captures=new Map(),readableIds=new Set(),processed=new Map();
  const status=document.getElementById('capture-status');
@@ -84,16 +84,18 @@ SCRIPT = r'''
   if(matching.length===1&&(local.length===1||!accesses||access.base_expression))return {...access,...matching[0]};
   return access;
  }
+ function accessState(v,state){return v.invalidAccessContext&&state==='normal'?'uncertain':state}
  function variableLines(v){
   const info=v.initialization||{},details=v.member_details;
   const lines=[];const indexAbnormal=(v.index_accesses||[]).some(a=>a.bounds&&a.actual_index!==null&&(a.actual_index<a.bounds[0]||a.actual_index>a.bounds[1]));
   const prefixAbnormal=(v.index_accesses||[]).some(a=>a.prefix_check?.ranges?.some(r=>['undefined','unaddressable','out_of_bounds'].includes(r.status))||['outside_block','freed','target_freed'].includes(a.prefix_check?.allocation?.status));
   const prefixUnknown=(v.index_accesses||[]).some(a=>a.prefix_check&&(!a.prefix_check.coverage_complete||a.prefix_check.ranges?.some(r=>['unknown','unchecked'].includes(r.status))||(a.prefix_check.range_basis==='index_probe'&&(!a.prefix_check.allocation||a.prefix_check.allocation.status==='unknown'))));
   const valueState=variableState(info.observed_status||info.status,v.status,info.complete);
-  const overall=v.reportedAccess||indexAbnormal||prefixAbnormal||valueState==='abnormal'?'abnormal':prefixUnknown?'uncertain':valueState;
+  const overall=v.reportedAccess||indexAbnormal||prefixAbnormal||valueState==='abnormal'?'abnormal':prefixUnknown||v.invalidAccessContext?'uncertain':valueState;
   lines.push({text:'\n'+v.name+(v.type?'（'+v.type+'）':'')+' · '+(v.role==='argument'?'函数参数':v.role==='source_expression'?'本行表达式逐项读取':'局部变量'),state:overall});
   if(v.macro_expansion)lines.push('当前源码位置的宏展开：'+v.macro_expansion);
   if(v.reportedAccess)lines.push({text:'本次非法访问地址落在此表达式的存储中；初始化检查通过不能将它判为正常。',state:'abnormal'});
+  else if(v.invalidAccessContext)lines.push({text:'与本次非法访问的关系尚未确认；下方仅说明初始化检查结果，不作“变量正常”的结论。',state:'uncertain'});
   for(const [position,raw] of (v.index_accesses||[]).entries()){
    const access=indexLabel(raw,v.name,v.index_accesses,position);
    lines.push('下标 '+(access.index_expression||'无法唯一对应（旧现场缺少名称，请重新采集）')+' = '+(access.actual_index??'未知')+'；'+(access.base_expression||'该数组')+' 的下标范围 '+(access.bounds?access.bounds.join('～')+'（元素索引）':'未知（没有可确认的数组边界）'));
@@ -109,7 +111,7 @@ SCRIPT = r'''
     const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;
     const init=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);
     const value=m.value===undefined?'旧现场未单独保存成员值':String(m.value);
-    lines.push({text:'  '+name+(m.type?'（'+m.type+'）':'')+' = '+value+'；'+(details&&m.status!=='available'?'无法读取':(initLabels[init]||'初始化状态无法确定')),state:variableState(init,details?m.status:undefined,info.complete)});
+    lines.push({text:'  '+name+(m.type?'（'+m.type+'）':'')+' = '+value+'；'+(details&&m.status!=='available'?'无法读取':(initLabels[init]||'初始化状态无法确定')),state:accessState(v,variableState(init,details?m.status:undefined,info.complete))});
     if(m.note)lines.push('    '+m.note);
    }
    if(details?.note)lines.push('展示范围：'+details.note);
@@ -136,7 +138,7 @@ SCRIPT = r'''
    const add=(tag,text,parent=panel)=>{const element=document.createElement(tag);element.textContent=text;parent.append(element);return element};
    add('h3','步骤三变量分析').style.margin='0 0 6px';
    const directChecks=frame.line_checks?.version===1;
-   add('p','变量查看器 v44 · '+(directChecks?'本行表达式 '+frame.line_checks.items.length+' 个（不是数组元素个数）'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
+   add('p','变量查看器 v45 · '+(directChecks?'本行表达式 '+frame.line_checks.items.length+' 个（不是数组元素个数）'+(frame.line_checks.truncated?'（已达到 32 项上限）':''):'现场没有本行逐项检查记录；以下仅是作用域值的源码匹配，不代表已逐项检查')).className='meta';
    for(const note of [frame.note,...(frame.inspection_errors||[]),!frame.source_line?.text&&frame.source_line?.note].filter(Boolean))add('p','采集说明：'+note).className='meta';
    if(directChecks){const rows=frame.line_checks.items,read=rows.filter(v=>v.status==='available').length,unknown=rows.filter(v=>['unknown','partial_check'].includes(v.initialization?.status||'unknown')).length;
     add('p','表达式读取成功 '+read+' / '+rows.length+' 个；未读到 '+(rows.length-read)+' 个；初始化检查不完整或未知 '+unknown+' 个。'+(frame.line_checks.truncated?'还有表达式未检查。':'')+'数组成员实际检查数量见下方区间检查。仅覆盖本行识别出的表达式，不代表查全所有变量，也不证明整次访问合法。').className='meta';}
@@ -145,16 +147,23 @@ SCRIPT = r'''
    if(['InvalidRead','InvalidWrite'].includes(e.kind)&&node.dataset.frameKey===saved.frames.keys().next().value){
     const fault=saved.snapshot.fault_analysis;
     add('h4','非法访问与变量定位（实际报错栈顶 #0，不是调用者变量）');
-    add('p',fault?.note||'旧现场未保存访问地址与变量的对应分析，请重新执行步骤三；变量检查通过不能排除本次非法访问。');
+    if(!fault?.access_verdict)add('p',fault?.note||'旧现场未保存访问地址与变量的对应分析，请重新执行步骤三；变量检查通过不能排除本次非法访问。');
     if(fault?.address){
      const named=saved.snapshot.memory?.named_object,obj=fault.named_object;
+     const verdict=fault.access_verdict;
+     if(verdict){
+      colorState(add('p','问题位置：'+verdict.summary),'abnormal');
+      add('p','为什么报错：'+verdict.reason);
+      add('p','尚未查明：'+verdict.root_cause);
+      add('p','下一步：'+verdict.next_step);
+     }
      if(named?.name==='this')add('p','Valgrind 指向的是 this 指针变量自身的存储位置，不是 this 指向的对象；需要分别判断。');
-     if(obj){
+     if(obj&&!verdict){
       colorState(add('p','已核对变量 '+obj.name+'：变量自身占 '+obj.size_bytes+' 字节；本次从偏移 '+obj.actual_offset+' 字节开始访问 '+obj.access_bytes+' 字节。'),'abnormal');
       add('p',obj.exceeds_storage?'本次访问超过变量自身的存储范围，超出 '+obj.outside_bytes+' 字节。':'本次访问未超出变量自身大小；不能用下标越界解释，也不能据此判为正常。仍需核查该栈存储在报错时是否有效。');
-     }else if(named)add('p','原始诊断指向变量 '+named.name+'，但尚未通过当前帧的变量地址核对，不能把它等同于本行其他变量。');
-     colorState(add('p','本次'+(e.kind==='InvalidRead'?'读取':'写入')+' '+fault.access_bytes+' 字节，被 Valgrind 判定为非法访问。'),'abnormal');
-     if(!(fault.boundary_findings||[]).length)add('p','目前能确认：'+fault.cause);
+     }else if(named&&!obj)add('p','原始诊断指向变量 '+named.name+'，但尚未通过当前帧的变量地址核对，不能把它等同于本行其他变量。');
+     if(!verdict)colorState(add('p','本次'+(e.kind==='InvalidRead'?'读取':'写入')+' '+fault.access_bytes+' 字节，被 Valgrind 判定为非法访问。'),'abnormal');
+     if(!verdict&&!(fault.boundary_findings||[]).length)add('p','目前能确认：'+fault.cause);
      for(const finding of fault.boundary_findings||[]){
       add('h4','检查对象：'+finding.expression);
       const bad=['out_of_allocation','use_after_free'].includes(finding.kind);
@@ -166,7 +175,7 @@ SCRIPT = r'''
       if(finding.actual_index!==undefined)add('p','每个元素占 '+finding.stride+' 字节，目标成员在元素内偏移 '+finding.member_offset+' 字节。',basis);
       add('p','基址 '+finding.base_address+'；分配块 '+finding.block_start+'～'+finding.block_end+'；实际访问地址 '+finding.access_address+'。',basis);
      }
-     if(fault.boundary_note)add('p',fault.boundary_note);
+     if(fault.boundary_note&&!verdict)add('p',fault.boundary_note);
      for(const c of fault.candidates||[]){
       if((fault.boundary_findings||[]).some(f=>f.expression===c.name))continue;
       add('p','候选表达式：'+c.name+'；该变量或成员占 '+c.size_bytes+' 字节，本次访问从其中第 '+c.offset_bytes+' 字节开始。');
@@ -200,6 +209,7 @@ SCRIPT = r'''
    for(const original of (directChecks?frame.line_checks.items:frame.variables)||[]){
     if(!onLine(original.name))continue;
     const v={...original,initialization:{...original.initialization}};
+    v.invalidAccessContext=['InvalidRead','InvalidWrite'].includes(e.kind);
     v.reportedAccess=frame.index===0&&((saved.snapshot.fault_analysis?.candidates||[]).some(c=>c.name===v.name)||saved.snapshot.fault_analysis?.named_object?.name===v.name);
     const members=v.member_details?.members||v.initialization.member_states?.filter(m=>m.name!=='$self');
     // Scalars (including scalar struct fields) have a $self initialization
@@ -234,7 +244,7 @@ SCRIPT = r'''
     const members=details?.members||v.initialization?.member_states?.filter(m=>m.name!=='$self');
     if(details||(members?.length||0)>0){
      let memberCount=0;
-     for(const m of members||[]){const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;if(!onLine(name))continue;const state=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);const row=add('span',(relatedCount+1)+'. '+name+(m.type?'（'+m.type+'）':'')+' = '+(m.value??'旧现场未单独保存成员值')+'；'+(initLabels[state]||'初始化状态无法确定'),group);row.style.display='block';colorState(row,variableState(state,details?m.status:undefined,v.initialization?.complete));if(m.note){const note=add('span','说明：'+m.note,group);note.style.display='block'}memberCount++;relatedCount++}
+     for(const m of members||[]){const name=v.name+(m.name.startsWith('[')?'':'.')+m.name;if(!onLine(name))continue;const state=typeof m.initialization==='string'?m.initialization:(details?'unknown':m.status);const row=add('span',(relatedCount+1)+'. '+name+(m.type?'（'+m.type+'）':'')+' = '+(m.value??'旧现场未单独保存成员值')+'；'+(initLabels[state]||'初始化状态无法确定'),group);row.style.display='block';colorState(row,accessState(v,variableState(state,details?m.status:undefined,v.initialization?.complete)));if(m.note){const note=add('span','说明：'+m.note,group);note.style.display='block'}memberCount++;relatedCount++}
      if(!memberCount){add('span',(relatedCount+1)+'. '+v.name+'：本行出现此对象，但没有可对应的成员值，不展开其他成员。\n',group);relatedCount++}
     }else{let first=true;for(const row of variableLines(v)){
      if(row.prefix){
@@ -270,8 +280,8 @@ SCRIPT = r'''
    const lines=[];
    if(node.dataset.frameKey===saved.frames.keys().next().value){
     const memory=saved.snapshot.memory||{};
-    const recovered=(saved.snapshot.fault_analysis?.boundary_findings||[]).length>0&&memory.block_bytes===undefined;
-    if(recovered)lines.push('已从对应表达式的基址指针取得分配信息，具体范围与实际访问对比见上方。');
+    const recovered=((saved.snapshot.fault_analysis?.boundary_findings||[]).length>0&&memory.block_bytes===undefined)||!!saved.snapshot.fault_analysis?.access_verdict;
+    if(recovered)lines.push('本次访问的具体问题与依据见上方结论。');
     if(!recovered){
     if(memory.explanation)lines.push(memory.explanation);
     lines.push(memory.block_bytes!==undefined?'本次访问的内存块参考（字节偏移，不是变量下标）':'本次访问地址与对象归属');

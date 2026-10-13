@@ -206,8 +206,25 @@ def analyze_fault_variables(snapshot):
         if 'block_bytes' not in memory:
             result['boundary_note'] = '已从 GDB 类型取得下列候选表达式的存储大小，可对照访问长度；这不是堆分配长度，也不能单独证明对象仍存活。'
     check = context.get('access_check', {})
-    if check.get('address') == memory.get('address') and not check.get('error') and check.get('unaddressable_offsets'):
-        result['boundary_note'] = result.get('boundary_note', '') + ' 本次访问范围的直接检查发现 %d 个不可访问字节。' % len(check['unaddressable_offsets'])
+    try:
+        checked = int(check.get('queried_bytes', 0))
+        offsets = check.get('unaddressable_offsets', [])
+        valid = (int(check['address'],16) == address and not check.get('error') and
+                 int(check['requested_bytes']) == width and 0 < checked <= width and
+                 offsets and all(type(i) is int and 0 <= i < checked for i in offsets))
+        if valid:
+            bad_bytes = len(set(offsets))
+            obj = result.get('named_object')
+            subject = obj['name']+' 变量自身的存储' if obj else '本次访问的内存'
+            result['access_verdict'] = {'kind':'inaccessible_storage','bad_bytes':bad_bytes,
+                'summary':subject+'不可访问：本次访问 %d 字节，直接检查确认其中 %d 字节不可访问。' % (width,bad_bytes),
+                'reason':'已确认的直接原因是访问了不可访问的存储，初始化通过不能推翻这个结论。',
+                'root_cause':'尚未确定这块存储为什么失效；不能据此断言对象已释放或指针未初始化。',
+                'next_step':'核查这个栈地址所属函数是否已经返回、是否仍被回调或其他线程使用，以及是否有代码主动将该区域标为不可访问。' if memory.get('storage_category')=='stack' else '结合分配/释放记录与对象生命周期，追查该地址何时失效。'}
+            if obj and not obj['exceeds_storage']:
+                result['access_verdict']['reason'] = '虽然访问长度没有超过 '+obj['name']+' 自身大小，但这块存储已被标为不可访问；长度正确不代表仍可使用。'
+    except (KeyError, TypeError, ValueError):
+        pass
     return result
 
 '''

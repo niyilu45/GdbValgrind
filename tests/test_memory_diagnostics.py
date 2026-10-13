@@ -16,7 +16,15 @@ class MemoryDiagnosticsTests(unittest.TestCase):
         result = analyze_fault_variables(snapshot)
         self.assertFalse(result['named_object']['exceeds_storage'])
         self.assertEqual(result['named_object']['address'],'0x100')
+        snapshot['instruction_context'] = {'access_check':{'address':'0x0100','requested_bytes':8,
+            'queried_bytes':8,'complete':True,'unaddressable_offsets':list(range(8))}}
+        verdict = analyze_fault_variables(snapshot)['access_verdict']
+        self.assertEqual(verdict['bad_bytes'],8)
+        self.assertIn('this 变量自身',verdict['summary'])
+        self.assertIn('长度正确不代表仍可使用',verdict['reason'])
+        self.assertIn('尚未确定',verdict['root_cause'])
         snapshot['memory']['access_bytes'] = 16
+        self.assertNotIn('access_verdict',analyze_fault_variables(snapshot))
         self.assertEqual(analyze_fault_variables(snapshot)['named_object']['outside_bytes'],8)
         snapshot['named_object_check']['address'] = '0x9999'
         self.assertNotIn('named_object',analyze_fault_variables(snapshot))

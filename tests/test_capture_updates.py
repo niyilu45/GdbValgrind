@@ -186,8 +186,8 @@ const faultText=lineSummary('fault(value);',[],[],'fault(value);',null,{},null,{
 assert(faultText.includes('实际报错栈顶 #0'));assert(!faultText.includes('valgrind-3.22.0'));assert(!faultText.includes('rcx=26'));assert(!faultText.includes('报错指令、寄存器'));assert(!faultText.includes('allregs-at-each-insn'));assert(faultText.includes('候选表达式：value'));assert(faultText.includes('访问长度超过该表达式'));
 // Real initialization results include $self for scalars and scalar members.
 const thisText=lineSummary('this->field;',[],[],'this->field;',[{name:'this',status:'available',value:'0x9999',initialization:{status:'defined',complete:true}}],{named_object:{name:'this'}},null,{
- fault_analysis:{note:'pointer storage',address:'0x100',last_address:'0x107',access_bytes:8,cause:'stack',candidates:[],named_object:{name:'this',size_bytes:8,actual_offset:0,exceeds_storage:false}}});
-assert(thisText.includes('不是 this 指向的对象'));assert(thisText.includes('已核对变量 this'));assert(thisText.includes('不能用下标越界解释'));
+ fault_analysis:{note:'pointer storage',address:'0x100',last_address:'0x107',access_bytes:8,cause:'stack',candidates:[],named_object:{name:'this',size_bytes:8,actual_offset:0,exceeds_storage:false},access_verdict:{summary:'this 变量自身的存储不可访问：本次访问 8 字节，直接检查确认其中 8 字节不可访问。',reason:'长度正确不代表仍可使用。',root_cause:'尚未确定存储失效原因。',next_step:'核查生命周期。'}}});
+assert(thisText.includes('不是 this 指向的对象'));assert(thisText.includes('this 变量自身的存储不可访问'));assert(thisText.includes('长度正确不代表仍可使用'));assert(thisText.includes('尚未确定存储失效原因'));assert(!thisText.includes('已核对变量 this'));assert(thisText.includes('与本次非法访问的关系尚未确认'));
 const boundaryText=lineSummary('boundary(value);',[],[],'boundary(value);',null,{missing_reason:'NO_BOUNDARY',range_explanation:'UNKNOWN_RANGE'},null,{
  fault_analysis:{note:'one candidate',address:'0x1d4',last_address:'0x1d7',access_bytes:4,cause:'old generic',candidates:[],boundary_findings:[{expression:'arr[i].member',kind:'out_of_allocation',outside_bytes:4,index_expression:'i',actual_index:26,block_index_range:[0,25],block_bytes:208,actual_offset:212,access_bytes:4,valid_start_offsets:[0,204],stride:8,member_offset:4,base_address:'0x100',block_start:'0x100',block_end:'0x1cf',access_address:'0x1d4'}]}});
 assert(boundaryText.includes('i = 26'));assert(boundaryText.includes('可容纳的下标为 0～25'));assert(boundaryText.includes('4 字节落在范围外'));assert(boundaryText.includes('建议检查：索引计算'));assert(!boundaryText.includes('NO_BOUNDARY'));assert(!boundaryText.includes('UNKNOWN_RANGE'));
@@ -195,7 +195,7 @@ const selfValue={name:'count',status:'available',value:'41',initialization:{stat
 const fieldValue={name:'rxvec->abc',status:'available',value:'73',initialization:{status:'undefined',complete:true,member_states:[{name:'$self',status:'undefined'}]}};
 let actualLine=lineSummary('use(count, rxvec->abc);', [], [], 'use(count, rxvec->abc);', [selfValue,fieldValue]);
 assert(actualLine.includes('实际值：41'));assert(actualLine.includes('实际值：73'));
-assert(actualLine.includes('【已检查部分通过】1. count'));assert(actualLine.includes('【异常】2. rxvec->abc'));
+assert(actualLine.includes('【不确定】1. count'));assert(actualLine.includes('【异常】2. rxvec->abc'));
 assert(actualLine.includes('检查结果：未初始化'));assert(!actualLine.includes('未采集到可直接对应'));
 assert(actualLine.includes('检查地址 0x1234'));assert(actualLine.includes('检查 4 / 4 字节'));
 assert(actualLine.includes('本行变量分析（含异常核查）'));
@@ -332,7 +332,7 @@ lineText=lineSummary('return other_table[i];', [],[{expression:'table[i]',status
 assert(!lineText.includes('table[i]：索引越界'));
 lineText=lineSummary('return expected;', [scalar('wrong','WRONG_LINE')], [], 'return wrong;');
 assert(!lineText.includes('WRONG_LINE'));assert(!lineText.includes('wrong：未初始化'));
-assert(lineText.includes('变量查看器 v44'));
+assert(lineText.includes('变量查看器 v45'));
 frame.children=[];parentFrame.children=[];
 window.aivCaptureUpdate({live:false,replay_id:'restore-struct',items:[{snapshot:struct}]});
 // A deduplicated report keeps one complete capture, never a mix of two stops.
