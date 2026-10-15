@@ -66,7 +66,7 @@ def example_auto_analysis(xml_path, project_dir, command, capture_dir, port):
 
 def ArgParser(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     actions = ('collect', 'report', 'analyze', 'summary', 'serve', 'debug', 'refresh-captures', 'browse', 'auto-values')
     parser.add_argument('--action', choices=actions, help='要执行的功能，例如 analyze；兼容旧子命令写法')
     # Stop interpreting tool options at the target command boundary.
@@ -159,7 +159,10 @@ def ArgParser(argv=None):
         target_parser.add_argument('--exeArgs', nargs=argparse.REMAINDER, help='目标程序参数；放在工具参数最后，后续内容原样传递')
     for legacy_parser in (collect, analyze, refresh):
         legacy_parser.add_argument('--output-dir', dest='output_dir', type=Path, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
-    # Ignore known but irrelevant options, without hiding misspelled names.
+    # Do not interpret unknown option prefixes as supported options.
+    for child in sub.choices.values():
+        child.allow_abbrev = False
+    # Ignore known but irrelevant options before collecting unknown arguments.
     action_parser = sub.choices.get(argv[0]) if argv else None
     if action_parser:
         known = {key: option for child in sub.choices.values()
@@ -178,7 +181,9 @@ def ArgParser(argv=None):
             filtered.append(value)
             index += 1
         argv = filtered
-    args = parser.parse_args(argv)
+    args, unknown = parser.parse_known_args(argv)
+    if unknown:
+        print('警告：无法识别的参数已忽略：' + repr(unknown), file=sys.stderr)
     if args.action in ('collect', 'analyze', 'refresh-captures') and args.output_dir is None:
         parser.error('请提供 --retPath 结果目录')
     if command and args.action not in ('collect', 'analyze', 'report', 'serve', 'debug'):

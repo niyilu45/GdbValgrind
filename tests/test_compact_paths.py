@@ -9,6 +9,20 @@ from inc.runtime_paths import configure_paths
 
 
 class CompactPathsTests(unittest.TestCase):
+    def test_unknown_options_warn_without_affecting_known_or_target_arguments(self):
+        with patch('sys.stderr', new_callable=io.StringIO) as stderr:
+            args = ArgParser(['--unknown-before', 'value', '--action', 'analyze',
+                              '--retPath', 'results', '--unknown=abc', '-Z', 'extra',
+                              '--mod', 'full', '--mode', 'fast', '--progPath', '.',
+                              '--exeName', 'app', '--exeArgs', '--unknown', 'target value'])
+        self.assertEqual(args.mode, 'fast')
+        self.assertEqual(args.command[1:], ['--unknown', 'target value'])
+        for value in ('--unknown-before', '--unknown=abc', '-Z', '--mod'):
+            self.assertIn(value, stderr.getvalue())
+        self.assertNotIn('target value', stderr.getvalue())
+        with patch('sys.stderr', new_callable=io.StringIO), self.assertRaises(SystemExit):
+            ArgParser(['--action', 'analyze', '--retPath', 'results', '--mode', 'invalid'])
+
     def test_separate_executable_and_arguments(self):
         target_args = ['--mode', 'production', '--retPath', 'target-dir',
                        '--exeName', 'target-option', 'two words', "don't", '', '--']
@@ -47,8 +61,10 @@ class CompactPathsTests(unittest.TestCase):
             self.assertIn(option, stderr.getvalue())
         args = ArgParser(['--action', 'collect', '--retPath', 'results', '--progPath', '.', '--exeName', 'app', '--exeArgs', '--retPath', 'target', '--mode', 'other'])
         self.assertEqual(args.command, [str(Path.cwd() / 'app'), '--retPath', 'target', '--mode', 'other'])
-        with patch('sys.stderr', new_callable=io.StringIO), self.assertRaises(SystemExit):
-            ArgParser(['--action', 'summary', '--retPath', 'results', '--misspelled', 'x'])
+        with patch('sys.stderr', new_callable=io.StringIO) as stderr:
+            args = ArgParser(['--action', 'summary', '--retPath', 'results', '--misspelled', 'x'])
+        self.assertEqual(args.xml, Path('results/errors.xml'))
+        self.assertIn('--misspelled', stderr.getvalue())
 
     def test_program_parent_and_git_root_and_saved_workdir(self):
         with tempfile.TemporaryDirectory() as folder:

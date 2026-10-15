@@ -30,7 +30,7 @@ python3.9 main.py --action analyze --mode fast --retPath /tmp/results --progPath
 
 `--mode fast` 属于工具，`--mode production` 属于目标程序。参数逐项原样传递，含空格的参数需加 Shell 引号，不要把整条目标命令包成一个字符串。
 
-当前 action 不需要的已知参数会警告并忽略，不中止执行；无法识别的参数名仍报错，避免拼写错误被静默忽略。`--exeArgs` 后的内容不按工具参数解析。
+当前 action 不需要的已知参数会警告并忽略，不中止执行；无法识别的工具参数及其附带值也会警告并忽略。仍需提供当前操作必需的参数；已知参数的值无效（例如 `--mode other`）仍会提示错误。`--exeArgs` 后的内容不按工具参数解析。
 
 ## 五种场景命令速查
 
