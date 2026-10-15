@@ -221,10 +221,17 @@ def ArgParser(argv=None):
             args.xml = args.xml or args.output_dir / 'errors.xml'
         if args.step3_only:
             args.base_report = args.base_report or args.output_dir / 'report.html'
-    return args
+    if hasattr(args, 'exeArgs'):
+        args.exeArgs = list(command[1:]) if command else []
+    if hasattr(args, 'output_dir'):
+        args.retPath = args.output_dir
+    return vars(args).copy()
 
 
 def AiValgrind(args):
+    # Keep the caller's dictionary reusable; runtime inference updates only this copy.
+    if isinstance(args, dict):
+        args = argparse.Namespace(**args)
     try:
         configure_paths(args)
         command = args.command

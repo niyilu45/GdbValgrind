@@ -9,18 +9,37 @@ from inc.core import prepare_capture
 
 
 class ModeTests(unittest.TestCase):
+    def test_parser_returns_plain_dict_and_dispatch_keeps_it_reusable(self):
+        import copy
+        with tempfile.TemporaryDirectory() as folder:
+            binary = Path(folder) / 'app'
+            binary.touch()
+            args = ArgParser(['--action', 'analyze', '--retPath', 'results',
+                              '--progPath', folder, '--exeName', 'app',
+                              '--exeArgs', '--count', '26', 'two words'])
+            self.assertIs(type(args), dict)
+            self.assertEqual(args['retPath'], Path('results'))
+            self.assertEqual(args['exeArgs'], ['--count', '26', 'two words'])
+            args['mode'] = 'fast'
+            original = copy.deepcopy(args)
+            with patch('main.print_tool_versions', return_value={}), patch('main.analyze_run', return_value=0) as run:
+                self.assertEqual(AiValgrind(args), 0)
+            self.assertEqual(args, original)
+            self.assertEqual(run.call_args.kwargs['mode'], 'fast')
+            self.assertEqual(run.call_args.kwargs['cwd'], Path(folder))
+
     def test_named_arguments_preserve_all_target_arguments(self):
         target = ['./my app', '--mode', 'production', '--xml', 'input.xml',
                   '--action', 'target-action', '--command', 'nested', '--',
                   'two words', "don't", '', 'literal;$HOME']
         args = ArgParser(['--action', 'analyze', '--mode', 'fast',
                           '--output-dir', 'results', '--command'] + target)
-        self.assertEqual(args.command, target)
-        self.assertEqual(args.mode, 'fast')
+        self.assertEqual(args['command'], target)
+        self.assertEqual(args['mode'], 'fast')
         with patch('main.print_tool_versions', return_value={}), patch('main.analyze_run', return_value=0) as run:
             self.assertEqual(AiValgrind(args), 0)
         self.assertEqual(run.call_args.args[0], target)
-        self.assertEqual(ArgParser(['--action=report', '--xml', 'errors.xml']).xml, Path('errors.xml'))
+        self.assertEqual(ArgParser(['--action=report', '--xml', 'errors.xml'])["xml"], Path('errors.xml'))
 
     def test_named_command_requires_executable(self):
         import io
@@ -42,7 +61,7 @@ class ModeTests(unittest.TestCase):
                 self.assertEqual(AiValgrind(args), 0)
             self.assertEqual(run.call_args.kwargs['mode'], mode)
             self.assertEqual(run.call_args.args[0], ['./app', '--mode', 'target-option'])
-        self.assertEqual(ArgParser(['analyze', '--output-dir', 'results']).mode, 'full')
+        self.assertEqual(ArgParser(['analyze', '--output-dir', 'results'])["mode"], 'full')
 
     def test_library_mode_reaches_embedded_capture_without_changing_precision(self):
         precision = {'options': ['--vgdb=full'], 'version': 'valgrind-3.22.0'}
@@ -59,11 +78,11 @@ class ModeTests(unittest.TestCase):
 
     def test_legacy_aliases_and_external_entry(self):
         args = ArgParser(['auto-values', '--xml', 'errors.xml', '--mode', 'fast', '--', './app'])
-        self.assertEqual(args.action, 'serve')
-        self.assertEqual(args.xml, Path('errors.xml'))
-        self.assertTrue(args.auto_values)
-        self.assertEqual(args.mode, 'fast')
+        self.assertEqual(args['action'], 'serve')
+        self.assertEqual(args['xml'], Path('errors.xml'))
+        self.assertTrue(args['auto_values'])
+        self.assertEqual(args['mode'], 'fast')
         import main
         with patch.object(main, 'AiValgrind', return_value=7) as run:
             self.assertEqual(main.main(['summary', 'errors.xml']), 7)
-        self.assertEqual(run.call_args.args[0].action, 'summary')
+        self.assertEqual(run.call_args.args[0]['action'], 'summary')

@@ -173,6 +173,18 @@ python3.9 main.py --action refresh-captures --retPath /tmp/results
 
 ## Python 库与验证
 
+`ArgParser(argv)` 返回普通字典，可用 `args["mode"]` 等方式读取或修改；路径值为 `pathlib.Path`，`exeArgs` 和 `command` 为参数列表。`AiValgrind(args)` 接收该字典，并在内部副本上推导运行目录，不改写传入字典。
+
+```python
+from main import ArgParser, AiValgrind
+
+args = ArgParser(["--action", "analyze", "--retPath", "/tmp/results",
+                  "--progPath", "/work/project/build", "--exeName", "app",
+                  "--exeArgs", "--count", "26"])
+args["mode"] = "fast"
+exit_code = AiValgrind(args)
+```
+
 `main.py` 中的 `main(argv)` 调用 `AiValgrind(ArgParser(argv))`，两个函数完整实现在 `main.py`。核心 API 保留在 `inc/`，供其他 Python 文件调用；库 API 仍可显式设置目录，命令行使用自动推导。
 
 ```python
