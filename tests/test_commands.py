@@ -41,9 +41,15 @@ class CommandTests(unittest.TestCase):
             metadata = json.loads(payload.group(1))['debug_command']
             self.assertEqual(metadata['base_args'], [
                 str(Path(sys.executable).resolve()), str(library / 'main.py'),
-                'debug', str(xml.resolve()), '--project-dir', str(project.resolve()),
+                '--action', 'debug', '--xml', str(xml.resolve()), '--project-dir', str(project.resolve()),
                 '--cwd', str(project.resolve())])
             self.assertEqual(metadata['target_args'], [str(project / 'build/app')])
+            from main import ArgParser
+            target = metadata['target_args'] + ['--mode', 'target-mode', 'two words', "don't", '']
+            parsed = ArgParser(metadata['base_args'][2:] + ['--error', 'sample', '--command'] + target)
+            self.assertEqual(parsed.command, target)
+            self.assertEqual(parsed.xml, xml.resolve())
+
             # The copied command must remain runnable from an unrelated directory.
             help_result = subprocess.run(metadata['base_args'][:2] + ['--help'],
                                          cwd=str(caller), capture_output=True, timeout=30)
@@ -63,9 +69,9 @@ class CommandTests(unittest.TestCase):
             self.assertFalse(report['xml_complete'])
             self.assertEqual(meta['target_args'], [str(project / 'build/my app'), 'a b', "don't", ''])
             args = meta['base_args']
-            for value in args[:2] + [args[3], args[5], args[7]]:
+            for value in args[:2] + [args[5], args[7], args[9]]:
                 self.assertTrue(Path(value).is_absolute(), value)
-            self.assertEqual(args[4:8], ['--project-dir', str(project), '--cwd', str(project)])
+            self.assertEqual(args[6:10], ['--project-dir', str(project), '--cwd', str(project)])
             self.assertNotIn('./your_program', render_html(report))
 
     def test_collection_metadata_preserves_workdir_and_stdin(self):

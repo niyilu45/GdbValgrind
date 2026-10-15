@@ -141,7 +141,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
             store.commit()
         if force:
             command = [sys.executable, str(Path(__file__).resolve().parents[1] / 'main.py'),
-                       'report', str(xml_path), '--output', str(directory / 'full-report.html')]
+                       '--action', 'report', '--xml', str(xml_path), '--output', str(directory / 'full-report.html')]
             if project_dir:
                 command += ['--project-dir', str(Path(project_dir).resolve())]
             stats = '\n'.join('%s: %s' % (kind, values) for kind, values in summary['kinds'].items())

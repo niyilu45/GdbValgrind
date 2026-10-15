@@ -47,7 +47,7 @@ def command_metadata(root, xml_path, project=None):
         except (OSError, ValueError, TypeError):
             pass
     base = [str(Path(sys.executable).resolve()), str(Path(__file__).resolve().parents[1] / 'main.py'),
-            'debug', str(xml_path)]
+            '--action', 'debug', '--xml', str(xml_path)]
     if project:
         base += ['--project-dir', project]
     base += ['--cwd', cwd]

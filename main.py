@@ -54,22 +54,38 @@ def example_auto_analysis(xml_path, project_dir, command, capture_dir, port):
 
 def ArgParser(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    # Split explicitly: argparse REMAINDER otherwise swallows report options.
-    command = argv[argv.index("--") + 1:] if "--" in argv else []
-    argv = argv[:argv.index("--")] if "--" in argv else argv
-    # Accept the former example entry point spelling as an alias.
+    parser = argparse.ArgumentParser(description=__doc__)
+    actions = ('collect', 'report', 'analyze', 'summary', 'serve', 'debug', 'refresh-captures', 'browse', 'auto-values')
+    parser.add_argument('--action', choices=actions, help='要执行的功能，例如 analyze；兼容旧子命令写法')
+    # Stop interpreting tool options at the target command boundary.
+    boundary = next((i for i, value in enumerate(argv) if value in ('--command', '--')), len(argv))
+    command = argv[boundary + 1:] if boundary < len(argv) else []
+    if boundary < len(argv) and argv[boundary] == '--command' and not command:
+        parser.error('--command 后必须提供目标程序及其参数')
+    argv = argv[:boundary]
+    action_options = [i for i, value in enumerate(argv) if value == '--action' or value.startswith('--action=')]
+    if len(action_options) > 1:
+        parser.error('--action 只能指定一次')
+    if action_options:
+        at = action_options[0]
+        if argv[at] == '--action':
+            if at + 1 == len(argv) or argv[at + 1].startswith('-'):
+                parser.error('--action 后必须提供功能名称')
+            action = argv[at + 1]
+            del argv[at:at + 2]
+        else:
+            action = argv.pop(at).split('=', 1)[1]
+        if action not in actions:
+            parser.error('未知 --action：' + action)
+        argv.insert(0, action)
     if argv and argv[0] in ('browse', 'auto-values'):
         auto = argv[0] == 'auto-values'
         argv[0] = 'serve'
         if auto:
             argv.append('--auto-values')
-    if argv and argv[0] in ('report', 'serve', 'debug', 'summary') and '--xml' in argv:
-        at = argv.index('--xml')
-        if at + 1 < len(argv):
-            xml = argv[at + 1]
-            del argv[at:at + 2]
-            argv.insert(1, xml)
-    parser = argparse.ArgumentParser(description=__doc__)
+    # Preserve old reports whose copied commands used a positional XML path.
+    if len(argv) > 1 and argv[0] in ('report', 'serve', 'debug', 'summary') and not argv[1].startswith('-'):
+        argv.insert(1, '--xml')
     sub = parser.add_subparsers(dest="action", required=True)
     refresh = sub.add_parser('refresh-captures', help='更新已有 full-report.html 的变量关联与筛选，不重新运行程序')
     refresh.add_argument('--output-dir', type=Path, required=True, help='包含 full-report.html 和 capture-updates.js 的结果目录')
@@ -99,7 +115,7 @@ def ArgParser(argv=None):
         command_parser.add_argument('--output-mode', choices=('pty', 'file'), default='pty', help='程序输出方式；file 绕过伪终端')
     for name, help_text in (("summary", "显示已保存或被中断 XML 的统计"), ("report", "XML 转为离线 HTML"), ("serve", "网页浏览和启动联合调试"), ("debug", "按错误 ID 启动联合调试")):
         p = sub.add_parser(name, help=help_text)
-        p.add_argument("xml", type=Path)
+        p.add_argument("--xml", type=Path, required=True, help="输入 XML 错误报告")
         p.add_argument("--project-dir", "-p", type=Path, help="工程根目录，嵌入上下各 10 行源码")
         p.add_argument('--strict-xml', action='store_true', help='要求 XML 完整闭合；默认恢复已完整写出的记录')
         if name == "report":
@@ -121,7 +137,12 @@ def ArgParser(argv=None):
     for mode_parser in (analyze, collect, sub.choices['report'], sub.choices['serve'], sub.choices['debug']):
         mode_parser.add_argument('--mode', choices=('fast', 'full'), default='full',
                                  help='fast: 当前行变量；full: 额外采集作用域变量（默认）；无变量采集时两种模式行为相同')
+    for target_parser in (collect, analyze, sub.choices['serve'], sub.choices['debug']):
+        target_parser.add_argument('--command', nargs=argparse.REMAINDER,
+                                  help='目标程序及其全部参数；必须放在工具参数最后，后续参数原样传递')
     args = parser.parse_args(argv)
+    if command and args.action not in ('collect', 'analyze', 'serve', 'debug'):
+        parser.error('该功能不执行目标程序，不接受 --command')
     args.command = command
     return args
 

@@ -2,6 +2,18 @@
 
 在 Linux 上联合使用 Valgrind 和 GDB，生成可浏览的内存问题报告，并在重新运行时采集错误现场变量。核心代码位于 `inc/`，统一入口为 `main.py`，无需安装第三方 Python 库。
 
+## 命名参数与目标程序参数
+
+工具参数使用显式名称：`--action` 指定功能，`--xml` 指定输入，`--output` / `--output-dir` 指定输出，`--project-dir` 指定工程，`--command` 指定目标程序及其全部参数。布尔开关如 `--report`、`--step3-only` 无需额外值。
+
+**`--command` 必须放在所有 AiValgrind 参数之后。** 后面每个参数都原样传给目标程序，不再由工具解析，目标参数可以与工具同名。包含空格的程序路径或参数用 Shell 引号包围，不要把整条目标命令合并成一个字符串。
+
+```bash
+python3.9 main.py --action analyze --mode fast --output-dir /tmp/results --project-dir /work/project --cwd /work/project --command "./build/my app" --config "configs/test case.json" --mode production --count 26 input.dat
+```
+
+这里 `--mode fast` 属于 AiValgrind，`--mode production` 属于目标程序。变量分析重跑时也使用这组参数。旧的子命令、位置 XML 和 `--` 分隔写法保留兼容，以下示例统一使用命名参数。
+
 ## 五种场景命令速查
 
 以下命令都在 AiValgrind 目录执行，将 `/work/project`、`./build/app` 和程序参数替换为实际值。也可把 `main.py` 写成工具的绝对路径。每个场景的快速、完整命令是二选一。
@@ -18,10 +30,10 @@
 
 ```bash
 # 快速模式
-python3.9 main.py collect --report --mode fast --output-dir /tmp/memory-results -p /work/project --cwd /work/project -- ./build/app arg1
+python3.9 main.py --action collect --report --mode fast --output-dir /tmp/memory-results --project-dir /work/project --cwd /work/project --command ./build/app arg1
 
 # 完整模式
-python3.9 main.py collect --report --mode full --output-dir /tmp/memory-results -p /work/project --cwd /work/project -- ./build/app arg1
+python3.9 main.py --action collect --report --mode full --output-dir /tmp/memory-results --project-dir /work/project --cwd /work/project --command ./build/app arg1
 ```
 
 检测结束后自动导出完整 `/tmp/memory-results/report.html`，不启动 GDB，不采集变量。运行期间仍可使用终端提供的实时网页链接。若中途 Ctrl+C 退出，使用场景二从已保存 XML 导出。
@@ -30,10 +42,10 @@ python3.9 main.py collect --report --mode full --output-dir /tmp/memory-results 
 
 ```bash
 # 快速模式
-python3.9 main.py report /tmp/memory-results/errors.xml --mode fast -p /work/project -o /tmp/memory-results/report.html
+python3.9 main.py --action report --xml /tmp/memory-results/errors.xml --mode fast --project-dir /work/project --output /tmp/memory-results/report.html
 
 # 完整模式
-python3.9 main.py report /tmp/memory-results/errors.xml --mode full -p /work/project -o /tmp/memory-results/report.html
+python3.9 main.py --action report --xml /tmp/memory-results/errors.xml --mode full --project-dir /work/project --output /tmp/memory-results/report.html
 ```
 
 不运行目标程序，也不需要 GDB。支持中断 XML 中已完整写出的错误记录。
@@ -42,10 +54,10 @@ python3.9 main.py report /tmp/memory-results/errors.xml --mode full -p /work/pro
 
 ```bash
 # 快速模式
-python3.9 main.py analyze --mode fast --output-dir /tmp/memory-results -p /work/project --cwd /work/project -- ./build/app arg1
+python3.9 main.py --action analyze --mode fast --output-dir /tmp/memory-results --project-dir /work/project --cwd /work/project --command ./build/app arg1
 
 # 完整模式
-python3.9 main.py analyze --mode full --output-dir /tmp/memory-results -p /work/project --cwd /work/project -- ./build/app arg1
+python3.9 main.py --action analyze --mode full --output-dir /tmp/memory-results --project-dir /work/project --cwd /work/project --command ./build/app arg1
 ```
 
 步骤二完成即可看 `report.html`；步骤三在重跑程序时采集变量，打开同目录 `full-report.html` 可逐步看到变量结果。程序通常运行两次，其文件写入等副作用也会重复执行；无错误时不启动步骤三。
@@ -54,10 +66,10 @@ python3.9 main.py analyze --mode full --output-dir /tmp/memory-results -p /work/
 
 ```bash
 # 快速模式
-python3.9 main.py analyze --step3-only --mode fast --base-report /tmp/memory-results/report.html --output-dir /tmp/memory-results -p /work/project --cwd /work/project -- ./build/app arg1
+python3.9 main.py --action analyze --step3-only --mode fast --base-report /tmp/memory-results/report.html --output-dir /tmp/memory-results --project-dir /work/project --cwd /work/project --command ./build/app arg1
 
 # 完整模式
-python3.9 main.py analyze --step3-only --mode full --base-report /tmp/memory-results/report.html --output-dir /tmp/memory-results -p /work/project --cwd /work/project -- ./build/app arg1
+python3.9 main.py --action analyze --step3-only --mode full --base-report /tmp/memory-results/report.html --output-dir /tmp/memory-results --project-dir /work/project --cwd /work/project --command ./build/app arg1
 ```
 
 跳过首次检测和 HTML 重建，复用原报告并重跑程序采集变量。自动查找 HTML 同目录的配套 XML，再尝试 HTML 记录的原 XML 路径；找不到时需要加 `--xml /实际路径/errors.xml`。**请保留配套 XML、程序和输入；仅有一个 HTML 文件不足以重现现场。** HTML 与 XML 的错误列表不一致时会停止，不会混入其他报告的变量。
@@ -68,10 +80,10 @@ python3.9 main.py analyze --step3-only --mode full --base-report /tmp/memory-res
 
 ```bash
 # 快速模式
-python3.9 main.py analyze --xml /tmp/memory-results/errors.xml --mode fast --output-dir /tmp/analysis-results -p /work/project --cwd /work/project -- ./build/app arg1
+python3.9 main.py --action analyze --xml /tmp/memory-results/errors.xml --mode fast --output-dir /tmp/analysis-results --project-dir /work/project --cwd /work/project --command ./build/app arg1
 
 # 完整模式
-python3.9 main.py analyze --xml /tmp/memory-results/errors.xml --mode full --output-dir /tmp/analysis-results -p /work/project --cwd /work/project -- ./build/app arg1
+python3.9 main.py --action analyze --xml /tmp/memory-results/errors.xml --mode full --output-dir /tmp/analysis-results --project-dir /work/project --cwd /work/project --command ./build/app arg1
 ```
 
 不需要提前生成 HTML，也不要添加 `--step3-only`。先从已有 XML 生成 `/tmp/analysis-results/report.html`，再重跑一次目标程序采集变量，并逐步更新 `/tmp/analysis-results/full-report.html` 中对应错误堆栈的变量分析。无已记录错误时不启动变量采集。
@@ -96,8 +108,8 @@ python3.9 main.py analyze --xml /tmp/memory-results/errors.xml --mode full --out
 两种模式不会主动隐藏不同的错误；但不同运行的输入、线程调度或执行路径可能不同，不能保证两次运行实际触发完全相同的错误。Valgrind 本身及源码/blame 处理仍有开销，快速模式不保证固定加速倍数。
 
 ```bash
-python3.9 main.py analyze --mode full --output-dir /tmp/memory-full \
-  -p /work/project --cwd /work/project -- ./build/app
+python3.9 main.py --action analyze --mode full --output-dir /tmp/memory-full \
+  --project-dir /work/project --cwd /work/project --command ./build/app
 ```
 
 ## 环境要求
@@ -115,8 +127,8 @@ python3.9 main.py analyze --mode full --output-dir /tmp/memory-full \
 ### 步骤一：检测并保存 XML
 
 ```bash
-python3.9 main.py collect --output-dir /tmp/memory-results \
-  -p /work/project --cwd /work/project -- ./build/app arg1
+python3.9 main.py --action collect --output-dir /tmp/memory-results \
+  --project-dir /work/project --cwd /work/project --command ./build/app arg1
 ```
 
 终端固定区域显示当前任务、开始时间、耗时、各类错误数量及程序输出。默认提供实时网页链接。远程 SSH 使用端口转发：
@@ -137,8 +149,8 @@ valgrind --tool=memcheck --xml=yes --xml-file=errors.xml \
 ### 步骤二：生成完整离线报告
 
 ```bash
-python3.9 main.py report /tmp/memory-results/errors.xml \
-  -p /work/project -o /tmp/memory-results/report.html --workers 4
+python3.9 main.py --action report --xml /tmp/memory-results/errors.xml \
+  --project-dir /work/project --output /tmp/memory-results/report.html --workers 4
 ```
 
 支持已完整写出的 XML 记录，即使 XML 被中断而未闭合。`--strict-xml` 要求完整 XML。源码/blame 按文件和所需行范围复用查询，默认 4 个工作线程，可选 1–8。Git 查询超时 30 秒时保留源码并说明缺失原因。进度在交互终端原地更新，重定向日志不周期性刷屏。
@@ -146,11 +158,11 @@ python3.9 main.py report /tmp/memory-results/errors.xml \
 ### 步骤三：单独采集变量并复用步骤二
 
 ```bash
-python3.9 main.py analyze --step3-only --mode fast \
+python3.9 main.py --action analyze --step3-only --mode fast \
   --xml /tmp/memory-results/errors.xml \
   --base-report /tmp/memory-results/report.html \
-  --output-dir /tmp/memory-results -p /work/project --cwd /work/project \
-  -- ./build/app arg1
+  --output-dir /tmp/memory-results --project-dir /work/project --cwd /work/project \
+  --command ./build/app arg1
 ```
 
 默认从 XML 同目录读取 `report.html`，也可通过 `--base-report` 指定兼容的已有完整报告。HTML 与 XML 的错误列表必须一致。使用配套 `run.json` 时，可以恢复目标程序、工作目录及标准输入文件；信息缺失时显式提供。
@@ -164,28 +176,28 @@ python3.9 main.py analyze --step3-only --mode fast \
 ### 已有 XML，连续执行步骤二、三
 
 ```bash
-python3.9 main.py analyze --xml /tmp/memory-results/errors.xml \
-  --output-dir /tmp/analysis-results -p /work/project --mode full \
-  --cwd /work/project -- ./build/app
+python3.9 main.py --action analyze --xml /tmp/memory-results/errors.xml \
+  --output-dir /tmp/analysis-results --project-dir /work/project --mode full \
+  --cwd /work/project --command ./build/app
 ```
 
 ## 浏览、筛选与调试
 
 ```bash
 # 查看统计，不重新运行目标
-python3.9 main.py summary /tmp/memory-results/errors.xml
+python3.9 main.py --action summary --xml /tmp/memory-results/errors.xml
 
 # 提供网页浏览服务
-python3.9 main.py serve /tmp/memory-results/errors.xml -p /work/project
+python3.9 main.py --action serve --xml /tmp/memory-results/errors.xml --project-dir /work/project
 
 # 按报告中的错误 ID 调试
-python3.9 main.py debug /tmp/memory-results/errors.xml -p /work/project \
-  --error ERROR_ID --cwd /work/project -- ./build/app
+python3.9 main.py --action debug --xml /tmp/memory-results/errors.xml --project-dir /work/project \
+  --error ERROR_ID --cwd /work/project --command ./build/app
 
 # 在实际内存错误处采集变量
-python3.9 main.py debug /tmp/memory-results/errors.xml -p /work/project \
+python3.9 main.py --action debug --xml /tmp/memory-results/errors.xml --project-dir /work/project \
   --error ERROR_ID --auto-values --mode fast \
-  --capture-dir /tmp/captures --cwd /work/project -- ./build/app
+  --capture-dir /tmp/captures --cwd /work/project --command ./build/app
 ```
 
 网页命令复制到同一 Linux 主机的普通终端执行；`aiv-goto` 等继续调试命令输入已有会话的 `(gdb)`。跳转到已经经过的错误位置时需要重新运行，按提示选择 `y` 或 `n`。源码断点仅帮助定位调用路径，不表示已经触发非法访问。
@@ -217,7 +229,7 @@ python3.9 main.py debug /tmp/memory-results/errors.xml -p /work/project \
 更新已有变量查看器和关联分析，不重新执行目标：
 
 ```bash
-python3.9 main.py refresh-captures --output-dir /tmp/memory-results
+python3.9 main.py --action refresh-captures --output-dir /tmp/memory-results
 ```
 
 完成后重新打开或刷新 `full-report.html`。此操作不会补采旧现场缺失的变量或地址；缺少数据时需要重新执行步骤三。
@@ -246,7 +258,7 @@ analyze_run(["./build/app"], "/tmp/results", cwd="/work/project",
 ```bash
 python3.9 -m unittest discover -s tests
 python3.9 main.py --help
-python3.9 main.py analyze --help
+python3.9 main.py --action analyze --help
 ```
 
 测试包括解析、去重、网页、路径、模拟 GDB 现场及 Linux 集成测试。Windows 上会跳过需要 Linux/Valgrind/GDB 的用例。真实运行的速度及变量可读性请以目标系统验证为准。

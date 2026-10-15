@@ -9,6 +9,24 @@ from inc.core import prepare_capture
 
 
 class ModeTests(unittest.TestCase):
+    def test_named_arguments_preserve_all_target_arguments(self):
+        target = ['./my app', '--mode', 'production', '--xml', 'input.xml',
+                  '--action', 'target-action', '--command', 'nested', '--',
+                  'two words', "don't", '', 'literal;$HOME']
+        args = ArgParser(['--action', 'analyze', '--mode', 'fast',
+                          '--output-dir', 'results', '--command'] + target)
+        self.assertEqual(args.command, target)
+        self.assertEqual(args.mode, 'fast')
+        with patch('main.print_tool_versions', return_value={}), patch('main.analyze_run', return_value=0) as run:
+            self.assertEqual(AiValgrind(args), 0)
+        self.assertEqual(run.call_args.args[0], target)
+        self.assertEqual(ArgParser(['--action=report', '--xml', 'errors.xml']).xml, Path('errors.xml'))
+
+    def test_named_command_requires_executable(self):
+        import io
+        with patch('sys.stderr', new_callable=io.StringIO), self.assertRaises(SystemExit):
+            ArgParser(['--action', 'analyze', '--output-dir', 'results', '--command'])
+
     def test_entry_functions_are_implemented_in_main(self):
         import inspect
         import main
