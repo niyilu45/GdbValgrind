@@ -513,6 +513,7 @@ class AutoValueCapture:
                     if disconnected(str(exc)):
                         raise CaptureDisconnected(str(exc))
                     snapshot['named_object_check'] = {'name':named['name'], 'error':str(exc)}
+            snapshot['mode'] = _capture_config.get('mode', 'full')
             snapshot['precision'] = _capture_config.get('precision', {})
             snapshot['instruction_context'] = capture_fault_context(frame, snapshot['memory'], snapshot['precision']) if frame else {}
             initialization_budget = {'queries': 256, 'bytes': 32768}
@@ -538,7 +539,11 @@ class AutoValueCapture:
                 # reads in this frame. Transport loss still aborts immediately.
                 row.setdefault('source_line', {})
                 row['inspection_errors'] = []
-                for stage in ('line_checks', 'variables', 'index_analysis'):
+                stages = ('line_checks', 'index_analysis') if snapshot['mode'] == 'fast' else ('line_checks', 'variables', 'index_analysis')
+                if snapshot['mode'] == 'fast':
+                    row['variables'] = []
+                    row['scope_capture_note'] = '快速模式仅检查当前源码行表达式，未枚举其他作用域变量'
+                for stage in stages:
                     try:
                         if stage == 'line_checks':
                             row[stage] = check_source_expressions(frame, row['source_line'], initialization_budget)

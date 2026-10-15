@@ -25,8 +25,11 @@ class DebugOptions:
     capture_dir: PathLike = "captures"
     stop_on_error: bool = False
     auto_continue: bool = False
+    mode: str = "full"
 
     def __post_init__(self):
+        if self.mode not in ("fast", "full"):
+            raise ValueError("mode 必须为 fast 或 full")
         if self.auto_continue and not self.auto_values:
             raise ValueError('auto_continue 需要同时启用 auto_values')
         if isinstance(self.command, (str, bytes)) or not self.command:
@@ -40,6 +43,7 @@ class DebugOptions:
 
 def _arguments(options, project_dir, frame=None, port=8765, open_browser=False):
     return SimpleNamespace(
+        mode=options.mode if options else "full",
         command=list(options.command) if options else [],
         cwd=options.cwd if options else None,
         stdin_file=options.stdin_file if options else None,

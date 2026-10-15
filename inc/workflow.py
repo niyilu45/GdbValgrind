@@ -62,12 +62,15 @@ def repair_saved_diagnostics(directory):
 
 
 def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=None, stdin_file=None, live_port=None,
-                plain_terminal=False, output_mode='pty', runtime_info=None, pause_on_error=False, step3_only=False, base_report=None):
+                plain_terminal=False, output_mode='pty', runtime_info=None, pause_on_error=False, step3_only=False, base_report=None, mode="full"):
     """Collect if needed, load error locations, then replay with value capture.
 
     Capture and continue by default; pause_on_error opts into interactive GDB.
     Ctrl+C aborts the workflow and never starts a new replay.
     """
+    if mode not in ("fast", "full"):
+        raise ValueError("mode 必须为 fast 或 full")
+    print("变量采集模式：" + ("快速（当前行变量）" if mode == "fast" else "完整（当前行及作用域变量）"), flush=True)
     directory = Path(output_dir).resolve()
     source = Path(xml_path).resolve() if xml_path else None
     print('analyze 流程版本: SQLite 分页 / 步骤 2 自动生成完整 HTML / 步骤 3 默认自动继续\n运行代码: ' + str(Path(__file__).resolve()),flush=True)
@@ -161,7 +164,7 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
     else:
         print('保存现场后自动继续，程序结束后自动退出；无需输入 continue。Ctrl+C 终止整个流程。', flush=True)
     options = DebugOptions(command, cwd=cwd, stdin_file=stdin_file, auto_values=True,
-                           capture_dir=directory / 'captures', auto_continue=not pause_on_error)
+                           capture_dir=directory / 'captures', auto_continue=not pause_on_error, mode=mode)
     base_html = base_html or (directory / 'report.html').read_text(encoding='utf-8')
     prepare_capture_output(directory)
     previous = set((directory / 'captures').glob('session-*/error-*.txt'))

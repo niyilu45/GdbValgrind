@@ -16,7 +16,7 @@ class BootstrapTests(unittest.TestCase):
             root = Path(folder)
             shutil.copytree(checkout / 'inc', root / 'inc',
                             ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
-            for entry in ('aivalgrind.py', 'main.py'):
+            for entry in ('main.py',):
                 shutil.copy2(checkout / entry, root / entry)
             caches = []
             for name, old in (
@@ -37,14 +37,14 @@ class BootstrapTests(unittest.TestCase):
                                     cwd=root, capture_output=True, text=True, timeout=20)
             self.assertIn('cannot import name', broken.stderr)
             self.assertIn('refresh_capture_report', broken.stderr)
-            for entry in ('aivalgrind.py', 'main.py'):
+            for entry in ('main.py',):
                 with self.subTest(entry=entry):
                     result = subprocess.run([sys.executable, str(root / entry), '--help'],
                                             cwd=folder, capture_output=True, text=True, timeout=20)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertIn('usage:', result.stdout)
             # The real refresh path also reaches ordinary validation, not ImportError.
-            result = subprocess.run([sys.executable, str(root / 'aivalgrind.py'),
+            result = subprocess.run([sys.executable, str(root / 'main.py'),
                                      'refresh-captures', '--output-dir', folder],
                                     capture_output=True, text=True, timeout=20)
             self.assertEqual(result.returncode, 2)

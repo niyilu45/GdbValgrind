@@ -55,11 +55,11 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             serve_report(self.report, port=65536)
 
-    def test_both_entry_points_generate_identical_reports(self):
+    def test_positional_and_legacy_xml_arguments_generate_identical_reports(self):
         with tempfile.TemporaryDirectory() as directory:
             old, example = Path(directory) / 'old.html', Path(directory) / 'example.html'
             commands = [
-                [sys.executable, str(ROOT / 'aivalgrind.py'), 'report', str(ROOT / 'examples/sample.xml'), '-p', str(ROOT), '-o', str(old)],
+                [sys.executable, str(ROOT / 'main.py'), 'report', str(ROOT / 'examples/sample.xml'), '-p', str(ROOT), '-o', str(old)],
                 [sys.executable, str(ROOT / 'main.py'), 'report', '--xml', str(ROOT / 'examples/sample.xml'), '-p', str(ROOT), '-o', str(example)],
             ]
             for command in commands:

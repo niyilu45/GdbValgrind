@@ -10,11 +10,23 @@ from .workflow import analyze_run
 from . import workflow
 from .versions import print_tool_versions
 
-def main(argv=None):
+def ArgParser(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     # Split explicitly: argparse REMAINDER otherwise swallows report options.
     command = argv[argv.index("--") + 1:] if "--" in argv else []
     argv = argv[:argv.index("--")] if "--" in argv else argv
+    # Accept the former example entry point spelling as an alias.
+    if argv and argv[0] in ('browse', 'auto-values'):
+        auto = argv[0] == 'auto-values'
+        argv[0] = 'serve'
+        if auto:
+            argv.append('--auto-values')
+    if argv and argv[0] in ('report', 'serve', 'debug', 'summary') and '--xml' in argv:
+        at = argv.index('--xml')
+        if at + 1 < len(argv):
+            xml = argv[at + 1]
+            del argv[at:at + 2]
+            argv.insert(1, xml)
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
     refresh = sub.add_parser('refresh-captures', help='更新已有 full-report.html 的变量关联与筛选，不重新运行程序')
@@ -62,8 +74,16 @@ def main(argv=None):
         if name == "debug":
             p.add_argument("--error", required=True, help="HTML 中的错误 ID")
             p.add_argument("--frame", help="指定 调用栈序号:帧序号，从 0 开始")
+    for mode_parser in (analyze, sub.choices['serve'], sub.choices['debug']):
+        mode_parser.add_argument('--mode', choices=('fast', 'full'), default='full',
+                                 help='fast: 当前行变量；full: 额外采集作用域变量（默认）；检测规则相同')
     args = parser.parse_args(argv)
     args.command = command
+    return args
+
+
+def AiValgrind(args):
+    command = args.command
     try:
         if args.action == 'refresh-captures':
             refresh_report = getattr(workflow, 'refresh_capture_report', None)
@@ -79,7 +99,7 @@ def main(argv=None):
             return analyze_run(command, args.output_dir, xml_path=args.xml, project_dir=args.project_dir,
                                cwd=args.cwd, stdin_file=args.stdin_file, live_port=None if args.no_web else args.port,
                                plain_terminal=args.plain_terminal, output_mode=args.output_mode, runtime_info=runtime_info,
-                               pause_on_error=args.pause_on_error, step3_only=args.step3_only, base_report=args.base_report)
+                               pause_on_error=args.pause_on_error, step3_only=args.step3_only, base_report=args.base_report, mode=args.mode)
         if args.action == 'collect':
             return collect_run(command, args.output_dir, cwd=args.cwd, stdin_file=args.stdin_file, interval=args.interval,
                                live_port=None if args.no_web else args.port, project_dir=args.project_dir,
@@ -119,3 +139,7 @@ def main(argv=None):
         print("错误: " + str(exc), file=sys.stderr)
         return 2
     return 0
+
+
+def main(argv=None):
+    return AiValgrind(ArgParser(argv))

@@ -464,14 +464,17 @@ def debug_commands(frame, pid, prefix, vgdb, project=None, stop_on_error=False, 
     return commands
 
 
-def prepare_capture(directory, requested_error_id, *, auto_continue=False, source_errors=(), precision=None):
+def prepare_capture(directory, requested_error_id, *, auto_continue=False, source_errors=(), precision=None, mode="full"):
     """Each invocation gets its own directory; no previous capture is overwritten."""
+    if mode not in ("fast", "full"):
+        raise ValueError("mode 必须为 fast 或 full")
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     session = Path(tempfile.mkdtemp(prefix="session-", dir=str(directory)))
     register_capture(session)
     config = {"directory": str(session), "requested_error_id": requested_error_id, "auto_continue": auto_continue}
     config['precision'] = precision or {}
+    config['mode'] = mode
     source_paths, conflicts = {}, set()
     for error in source_errors:
         for stack in error.get('stacks', []):
@@ -600,8 +603,9 @@ def _run_debug(error, args, processes):
     for line in precision_lines(precision):
         print(line, flush=True)
     if auto_values:
+        print("变量采集模式：" + ("快速（当前行表达式）" if getattr(args, "mode", "full") == "fast" else "完整（含作用域变量）"), flush=True)
         session, capture_script = prepare_capture(args.capture_dir, error["id"], auto_continue=auto_continue,
-                                                  source_errors=getattr(args, 'navigation_errors', None) or [error], precision=precision)
+                                                  source_errors=getattr(args, 'navigation_errors', None) or [error], precision=precision, mode=getattr(args, "mode", "full"))
         mode = "保存现场后自动继续至程序结束" if auto_continue else "保存现场后暂停，等待 continue 或 quit"
         print("自动采集模式：跳过源码断点，" + mode + "。\n采集目录: " + str(session), flush=True)
     else:

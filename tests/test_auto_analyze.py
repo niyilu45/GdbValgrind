@@ -94,7 +94,7 @@ int main(int argc, char **argv) {
 ''', encoding='utf-8')
             subprocess.run(['cc', '-g', '-O0', str(source), '-o', str(binary)], check=True, capture_output=True)
             output = root / 'run'
-            run = subprocess.run([sys.executable, str(ROOT / 'aivalgrind.py'), 'analyze', '--no-web',
+            run = subprocess.run([sys.executable, str(ROOT / 'main.py'), 'analyze', '--no-web',
                 '--plain-terminal', '--output-mode', 'file', '--output-dir', str(output), '--', str(binary), str(marker)],
                 stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)

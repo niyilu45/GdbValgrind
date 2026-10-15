@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Five examples using the public inc library. All core logic lives in inc/."""
-import argparse
+"""Single command-line entry point and library usage examples. Core logic lives in inc/."""
 from pathlib import Path
-import subprocess
-import sys
 import runpy
 
 runpy.run_path(str(Path(__file__).resolve().parent / 'inc' / 'bootstrap.py'))
 from inc import DebugOptions, collect_run, debug_error, export_report, load_report, serve_report
-from inc.cli import main as cli_main
-from inc.versions import print_tool_versions
+from inc.cli import ArgParser, AiValgrind
 
 
 def example_collect(command, output_dir):
@@ -50,47 +46,7 @@ def example_auto_analysis(xml_path, project_dir, command, capture_dir, port):
 
 
 def main(argv=None):
-    argv = list(sys.argv[1:] if argv is None else argv)
-    # One-command workflow uses the same library-backed CLI as aivalgrind.py.
-    if argv and argv[0] in ('analyze', 'collect', 'refresh-captures'):
-        return cli_main(argv)
-    split = argv.index("--") if "--" in argv else len(argv)
-    command, argv = argv[split + 1:], argv[:split]
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("scenario", choices=["collect", "report", "browse", "debug", "auto-values"])
-    parser.add_argument("--xml", default="examples/sample.xml")
-    parser.add_argument("--project-dir", "-p", default=".")
-    parser.add_argument("--output", "-o", default="report.html")
-    parser.add_argument("--error", help="debug 场景必填，使用报告中的错误 ID")
-    parser.add_argument("--capture-dir", default="captures")
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument('--output-dir', default='run-results')
-    args = parser.parse_args(argv)
-    if args.scenario in ("collect", "debug", "auto-values") and not command:
-        parser.error("调试示例必须在 -- 后提供实际程序及参数")
-    if args.scenario == "debug" and not args.error:
-        parser.error("debug 示例需要 --error")
-    if args.scenario in ("report", "browse") and command:
-        parser.error("此示例不执行程序，无需提供 -- 后的参数")
-    try:
-        print_tool_versions(args.scenario)
-        if args.scenario == 'collect':
-            return example_collect(command, args.output_dir)
-        elif args.scenario == "report":
-            example_report(args.xml, args.project_dir, args.output)
-        elif args.scenario == "browse":
-            example_browse(args.xml, args.project_dir, args.port)
-        elif args.scenario == "debug":
-            return example_debug(args.xml, args.project_dir, args.error, command)
-        else:
-            example_auto_analysis(args.xml, args.project_dir, command, args.capture_dir, args.port)
-    except KeyboardInterrupt:
-        print("已中断，调试进程已执行清理。", file=sys.stderr)
-        return 130
-    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-        print("示例运行失败: " + str(exc), file=sys.stderr)
-        return 2
-    return 0
+    return AiValgrind(ArgParser(argv))
 
 
 if __name__ == "__main__":

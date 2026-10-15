@@ -13,6 +13,20 @@ from inc import cli
 
 
 class CaptureTests(unittest.TestCase):
+    def test_fast_mode_keeps_source_checks_without_enumerating_scope(self):
+        checks = {'items': [{'name': 'arr[i]', 'status': 'available', 'value': '26'}]}
+        self.scope['_capture_config']['mode'] = 'fast'
+        self.scope['check_source_expressions'] = lambda *args: checks
+        with patch.dict(self.scope, capture_variables=lambda *args: self.fail('fast enumerated scope')):
+            self.count = 1
+            self.collector.on_stop(None)
+        data = json.loads((self.root / 'error-0001.json').read_text(encoding='utf-8'))
+        self.assertEqual(data['mode'], 'fast')
+        self.assertEqual(data['frames'][0]['line_checks'], checks)
+        self.assertEqual(data['frames'][0]['variables'], [])
+        self.assertEqual(data['association']['status'], 'verified')
+        self.assertEqual(data['memory']['access'], 'write')
+
     def test_location_address_survives_live_capture(self):
         self.error = self.error.replace('Address 0x200', 'Location 0x200')
         self.count = 1
@@ -804,7 +818,7 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(commands[-1], 'continue')
 
     def test_cli_exposes_capture_mode(self):
-        result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / 'aivalgrind.py'), 'serve', '--help'],
+        result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / 'main.py'), 'serve', '--help'],
                                 capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b'--auto-values', result.stdout)

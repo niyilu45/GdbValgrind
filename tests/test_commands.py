@@ -40,7 +40,7 @@ class CommandTests(unittest.TestCase):
             self.assertIsNotNone(payload)
             metadata = json.loads(payload.group(1))['debug_command']
             self.assertEqual(metadata['base_args'], [
-                str(Path(sys.executable).resolve()), str(library / 'aivalgrind.py'),
+                str(Path(sys.executable).resolve()), str(library / 'main.py'),
                 'debug', str(xml.resolve()), '--project-dir', str(project.resolve()),
                 '--cwd', str(project.resolve())])
             self.assertEqual(metadata['target_args'], [str(project / 'build/app')])
