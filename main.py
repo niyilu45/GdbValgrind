@@ -82,10 +82,12 @@ def ArgParser(argv=None):
     analyze.add_argument('--port', type=int, default=8765, help='首次采集实时网页端口，0 为自动选择')
     analyze.add_argument('--no-web', action='store_true', help='关闭首次采集实时网页')
     analyze.add_argument('--pause-on-error', action='store_true', help='保存现场后暂停，进入交互式 GDB；默认自动继续至程序结束')
-    analyze.add_argument('--step3-only', action='store_true', help='使用 --xml 跳过步骤一、二，直接采集变量并生成 full-report.html')
+    analyze.add_argument('--step3-only', action='store_true', help='使用 --xml 或 --base-report 跳过步骤一、二，采集变量并更新 full-report.html')
     analyze.add_argument('--base-report', type=Path, help='步骤二 HTML，默认读取 XML 同目录的 report.html')
     collect = sub.add_parser('collect', help='首次运行 Valgrind，实时统计并保留中断结果')
     collect.add_argument('--output-dir', type=Path, required=True, help='采集目录；可复用，只清理清单登记的旧输出')
+    collect.add_argument('--report', action='store_true', help='检测结束后生成完整 report.html，不启动变量采集')
+    collect.add_argument('--workers', type=int, choices=range(1,9), default=4)
     collect.add_argument('--cwd', type=Path)
     collect.add_argument('--stdin-file', type=Path)
     collect.add_argument('--interval', type=float, default=1.0)
@@ -116,9 +118,9 @@ def ArgParser(argv=None):
         if name == "debug":
             p.add_argument("--error", required=True, help="HTML 中的错误 ID")
             p.add_argument("--frame", help="指定 调用栈序号:帧序号，从 0 开始")
-    for mode_parser in (analyze, sub.choices['serve'], sub.choices['debug']):
+    for mode_parser in (analyze, collect, sub.choices['report'], sub.choices['serve'], sub.choices['debug']):
         mode_parser.add_argument('--mode', choices=('fast', 'full'), default='full',
-                                 help='fast: 当前行变量；full: 额外采集作用域变量（默认）；检测规则相同')
+                                 help='fast: 当前行变量；full: 额外采集作用域变量（默认）；无变量采集时两种模式行为相同')
     args = parser.parse_args(argv)
     args.command = command
     return args
@@ -143,9 +145,15 @@ def AiValgrind(args):
                                plain_terminal=args.plain_terminal, output_mode=args.output_mode, runtime_info=runtime_info,
                                pause_on_error=args.pause_on_error, step3_only=args.step3_only, base_report=args.base_report, mode=args.mode)
         if args.action == 'collect':
-            return collect_run(command, args.output_dir, cwd=args.cwd, stdin_file=args.stdin_file, interval=args.interval,
+            result = collect_run(command, args.output_dir, cwd=args.cwd, stdin_file=args.stdin_file, interval=args.interval,
                                live_port=None if args.no_web else args.port, project_dir=args.project_dir,
                                plain_terminal=args.plain_terminal, output_mode=args.output_mode, runtime_info=runtime_info)
+            if args.report:
+                report_path = args.output_dir.resolve() / 'report.html'
+                export_report(args.output_dir / 'errors.xml', report_path,
+                              project_dir=args.project_dir, workers=args.workers)
+                print('完整报告已生成：' + str(report_path), flush=True)
+            return result
         print('正在解析 XML、去重并读取源码，请稍候……', flush=True)
         from inc.terminal import ReportProgress
         with ReportProgress('解析与准备报告') as progress:

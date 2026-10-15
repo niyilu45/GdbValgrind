@@ -2,18 +2,83 @@
 
 在 Linux 上联合使用 Valgrind 和 GDB，生成可浏览的内存问题报告，并在重新运行时采集错误现场变量。核心代码位于 `inc/`，统一入口为 `main.py`，无需安装第三方 Python 库。
 
-## 快速开始
+## 五种场景命令速查
+
+以下命令都在 AiValgrind 目录执行，将 `/work/project`、`./build/app` 和程序参数替换为实际值。也可把 `main.py` 写成工具的绝对路径。每个场景的快速、完整命令是二选一。
+
+| 场景 | 命令入口 | 目标程序运行次数 | 查看结果 |
+| --- | --- | --- | --- |
+| 1. 运行程序，生成 HTML | `collect --report` | 1 次 | `report.html` |
+| 2. 已有 XML，生成 HTML | `report` | 0 次 | 指定的 HTML |
+| 3. 运行程序，生成 HTML，再更新变量分析 | `analyze` | 通常 2 次 | `full-report.html` |
+| 4. 已有 HTML，更新变量分析 | `analyze --step3-only --base-report` | 重跑 1 次 | `full-report.html` |
+| 5. 已有 XML，生成 HTML 并分析变量 | `analyze --xml` | 重跑 1 次 | `report.html`、`full-report.html` |
+
+### 场景一：运行程序，生成 HTML 报告
 
 ```bash
-# 一次完成：检测 → 完整 HTML → 重新运行采集变量
-python3.9 /opt/AiValgrind/main.py analyze --mode fast \
-  --output-dir /tmp/memory-results -p /work/project --cwd /work/project \
-  -- ./build/app arg1
+# 快速模式
+python3.9 main.py collect --report --mode fast --output-dir /tmp/memory-results -p /work/project --cwd /work/project -- ./build/app arg1
+
+# 完整模式
+python3.9 main.py collect --report --mode full --output-dir /tmp/memory-results -p /work/project --cwd /work/project -- ./build/app arg1
 ```
 
-完成步骤二即可打开 `report.html`。步骤三运行时打开同目录的 `full-report.html`，变量结果逐步显示在对应错误堆栈的源码下方，不刷新整个页面。请保留配套的 `capture-updates.js` 和 `capture-progress.js`。
+检测结束后自动导出完整 `/tmp/memory-results/report.html`，不启动 GDB，不采集变量。运行期间仍可使用终端提供的实时网页链接。若中途 Ctrl+C 退出，使用场景二从已保存 XML 导出。
 
-**analyze 通常会运行目标程序两次**，程序自身的文件写入等副作用也会重复执行。已有 XML 时可跳过首次检测。
+### 场景二：已有 XML 错误报告，生成 HTML
+
+```bash
+# 快速模式
+python3.9 main.py report /tmp/memory-results/errors.xml --mode fast -p /work/project -o /tmp/memory-results/report.html
+
+# 完整模式
+python3.9 main.py report /tmp/memory-results/errors.xml --mode full -p /work/project -o /tmp/memory-results/report.html
+```
+
+不运行目标程序，也不需要 GDB。支持中断 XML 中已完整写出的错误记录。
+
+### 场景三：运行程序，生成 HTML，然后更新变量分析
+
+```bash
+# 快速模式
+python3.9 main.py analyze --mode fast --output-dir /tmp/memory-results -p /work/project --cwd /work/project -- ./build/app arg1
+
+# 完整模式
+python3.9 main.py analyze --mode full --output-dir /tmp/memory-results -p /work/project --cwd /work/project -- ./build/app arg1
+```
+
+步骤二完成即可看 `report.html`；步骤三在重跑程序时采集变量，打开同目录 `full-report.html` 可逐步看到变量结果。程序通常运行两次，其文件写入等副作用也会重复执行；无错误时不启动步骤三。
+
+### 场景四：已有 HTML 报告，然后更新变量分析
+
+```bash
+# 快速模式
+python3.9 main.py analyze --step3-only --mode fast --base-report /tmp/memory-results/report.html --output-dir /tmp/memory-results -p /work/project --cwd /work/project -- ./build/app arg1
+
+# 完整模式
+python3.9 main.py analyze --step3-only --mode full --base-report /tmp/memory-results/report.html --output-dir /tmp/memory-results -p /work/project --cwd /work/project -- ./build/app arg1
+```
+
+跳过首次检测和 HTML 重建，复用原报告并重跑程序采集变量。自动查找 HTML 同目录的配套 XML，再尝试 HTML 记录的原 XML 路径；找不到时需要加 `--xml /实际路径/errors.xml`。**请保留配套 XML、程序和输入；仅有一个 HTML 文件不足以重现现场。** HTML 与 XML 的错误列表不一致时会停止，不会混入其他报告的变量。
+
+更新结果查看同目录 `full-report.html`，原 `report.html` 不被改写。变量写入配套 `capture-updates.js`、进度写入 `capture-progress.js`，页面增量更新，不整页刷新。移动报告时保留配套文件。
+
+### 场景五：已有 XML 结果，生成 HTML 报告并进行变量分析
+
+```bash
+# 快速模式
+python3.9 main.py analyze --xml /tmp/memory-results/errors.xml --mode fast --output-dir /tmp/analysis-results -p /work/project --cwd /work/project -- ./build/app arg1
+
+# 完整模式
+python3.9 main.py analyze --xml /tmp/memory-results/errors.xml --mode full --output-dir /tmp/analysis-results -p /work/project --cwd /work/project -- ./build/app arg1
+```
+
+不需要提前生成 HTML，也不要添加 `--step3-only`。先从已有 XML 生成 `/tmp/analysis-results/report.html`，再重跑一次目标程序采集变量，并逐步更新 `/tmp/analysis-results/full-report.html` 中对应错误堆栈的变量分析。无已记录错误时不启动变量采集。
+
+支持不完整 XML 中已完整写出的错误记录。变量值来自本次重跑，无法仅凭 XML 恢复历史变量值；需保留目标程序及复现输入。若 XML 同目录有配套 `run.json`，可以恢复原程序命令、工作目录和标准输入文件；否则按上述命令明确提供。程序运行参数应与生成 XML 时一致。
+
+场景一、二没有变量采集，`fast` 和 `full` 使用相同检测/报告流程，不承诺速度差异；场景三、四、五的模式差异见下表。五种场景不会因快速模式减少检测种类或修改去重规则。
 
 ## 快速模式与完整模式
 

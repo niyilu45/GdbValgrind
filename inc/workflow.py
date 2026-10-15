@@ -61,6 +61,21 @@ def repair_saved_diagnostics(directory):
     progress.replace(directory / 'capture-progress.js')
 
 
+def resolve_report_xml(base_report):
+    """Read paths as data only; never execute HTML or a saved command."""
+    html_path = Path(base_report).resolve()
+    payload = report_payload(html_path.read_text(encoding='utf-8'))
+    if not isinstance(payload, dict) or not isinstance(payload.get('xml'), str) or not payload['xml']:
+        raise ValueError('HTML 没有可用的 XML 路径，请用 --xml 指定配套错误报告')
+    recorded = Path(payload['xml'])
+    # Prefer a co-located XML after the whole results directory has moved.
+    candidates = [html_path.parent / recorded.name, recorded if recorded.is_absolute() else html_path.parent / recorded]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    raise ValueError('找不到 HTML 配套的 XML；请保留 errors.xml 或通过 --xml 指定。不会启动目标程序。')
+
+
 def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=None, stdin_file=None, live_port=None,
                 plain_terminal=False, output_mode='pty', runtime_info=None, pause_on_error=False, step3_only=False, base_report=None, mode="full"):
     """Collect if needed, load error locations, then replay with value capture.
@@ -75,7 +90,9 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
     source = Path(xml_path).resolve() if xml_path else None
     print('analyze 流程版本: SQLite 分页 / 步骤 2 自动生成完整 HTML / 步骤 3 默认自动继续\n运行代码: ' + str(Path(__file__).resolve()),flush=True)
     if step3_only and source is None:
-        raise ValueError("--step3-only 需要 --xml 指定已有报告")
+        if not base_report:
+            raise ValueError("--step3-only 需要 --xml 或 --base-report 指定已有报告")
+        source = resolve_report_xml(base_report)
     base_path = Path(base_report).resolve() if base_report else (source.parent / 'report.html' if step3_only else None)
     base_html = None
     if step3_only:

@@ -115,10 +115,15 @@ class WorkflowTests(unittest.TestCase):
             self.assertNotIn(b'new variable',first)
             self.assertIn('new variable',(directory/'capture-updates.js').read_text())
 
-    def run_case(self, *, saved=False, interrupted=False, errors=True, unsupported=False, report_interrupted=False, project=False, pause=False, tty=True, step3=False, same_dir=False):
+    def test_step3_infers_xml_from_existing_html(self):
+        self.run_case(saved=True, step3=True, same_dir=True, infer_xml=True)
+
+    def run_case(self, *, saved=False, interrupted=False, errors=True, unsupported=False, report_interrupted=False, project=False, pause=False, tty=True, step3=False, same_dir=False, infer_xml=False):
         with tempfile.TemporaryDirectory() as root:
             output = Path(root) if same_dir else Path(root) / 'new-run'
             xml = Path(root) / 'saved.xml'
+            if infer_xml:
+                xml.write_text('<valgrindoutput/>', encoding='utf-8')
             report = workflow.core.report_from_root(ET.fromstring('<valgrindoutput>'+ (error('1') if errors else '')+'</valgrindoutput>'), str(xml))
             report['debug_command'] = {'target_args': ['/srv/app', 'arg'],
                       'base_args': ['--cwd', '/srv', '--stdin-file', '/srv/input']}
@@ -169,7 +174,7 @@ class WorkflowTests(unittest.TestCase):
                     if unsupported:
                         first.assert_not_called()
                 else:
-                    self.assertEqual(workflow.analyze_run([] if saved else ['/srv/app'], output, xml_path=xml if saved else None, project_dir=root if project else None, pause_on_error=pause, step3_only=step3), 0)
+                    self.assertEqual(workflow.analyze_run([] if saved else ['/srv/app'], output, xml_path=xml if saved and not infer_xml else None, project_dir=root if project else None, pause_on_error=pause, step3_only=step3, base_report=Path(root) / "report.html" if infer_xml else None), 0)
                     html = (output / ('full-report.html' if step3 else 'report.html')).read_text(encoding='utf-8')
                     self.assertIn('report-data', html)
                     if project:
