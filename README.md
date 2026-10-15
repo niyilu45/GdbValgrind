@@ -182,7 +182,7 @@ analyze_run(["./app", "arg1"], "/tmp/results", cwd="/work/project/build",
             project_dir="/work/project", mode="fast")
 ```
 
-库导入不启动进程，失败抛出异常而不退出宿主。外部调用文件可位于其他目录，网页入口的绝对路径仍指向本库所在目录的 `main.py`。
+库导入不启动进程，失败抛出异常而不退出宿主。导入 `main.py` 不改写宿主的 `sys.path`，不保留全局导入钩子；默认将内部 `inc` 加载到独立命名空间，避免与其他工程的同名包冲突。宿主已主动导入本项目的 `inc` 时复用该实例。更新后需重启原宿主 Python 进程，清除旧版本已经安装的钩子和模块缓存。外部调用文件可位于其他目录，网页入口的绝对路径仍指向本库所在目录的 `main.py`。
 
 ```bash
 python3.9 -m unittest discover -s tests

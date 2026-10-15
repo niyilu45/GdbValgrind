@@ -7,13 +7,25 @@ import subprocess
 import sys
 import runpy
 
-runpy.run_path(str(Path(__file__).resolve().parent / 'inc' / 'bootstrap.py'))
-from inc import DebugOptions, collect_run, debug_error, export_report, load_report, serve_report
-from inc.core import serve, run_debug, save_report
-from inc.collect import print_summary, summary_data
-from inc.workflow import analyze_run
-from inc import workflow
-from inc.versions import print_tool_versions
+_modules = runpy.run_path(str(Path(__file__).resolve().parent / 'inc' / 'bootstrap.py'))['load_checkout']()
+_library = _modules['library']
+DebugOptions = _library.DebugOptions
+collect_run = _library.collect_run
+debug_error = _library.debug_error
+export_report = _library.export_report
+load_report = _library.load_report
+serve_report = _library.serve_report
+serve = _modules['core'].serve
+run_debug = _modules['core'].run_debug
+save_report = _modules['core'].save_report
+print_summary = _modules['collect'].print_summary
+summary_data = _modules['collect'].summary_data
+workflow = _modules['workflow']
+analyze_run = workflow.analyze_run
+print_tool_versions = _modules['versions'].print_tool_versions
+configure_paths = _modules['runtime_paths'].configure_paths
+ReportProgress = _modules['terminal'].ReportProgress
+
 
 
 def example_collect(command, output_dir):
@@ -209,7 +221,6 @@ def ArgParser(argv=None):
 
 def AiValgrind(args):
     try:
-        from inc.runtime_paths import configure_paths
         configure_paths(args)
         command = args.command
         if args.action == 'refresh-captures':
@@ -238,7 +249,6 @@ def AiValgrind(args):
                 print('完整报告已生成：' + str(report_path), flush=True)
             return result
         print('正在解析 XML、去重并读取源码，请稍候……', flush=True)
-        from inc.terminal import ReportProgress
         with ReportProgress('解析与准备报告') as progress:
             report = load_report(args.xml, args.project_dir, allow_partial=not args.strict_xml,
                                  workers=getattr(args,'workers',1),progress=progress)
