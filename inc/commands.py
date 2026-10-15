@@ -47,13 +47,12 @@ def command_metadata(root, xml_path, project=None):
         except (OSError, ValueError, TypeError):
             pass
     base = [str(Path(sys.executable).resolve()), str(Path(__file__).resolve().parents[1] / 'main.py'),
-            '--action', 'debug', '--xml', str(xml_path)]
-    if project:
-        base += ['--project-dir', project]
-    base += ['--cwd', cwd]
+            '--action', 'debug', '--retPath', str(xml_path.parent)]
+    if xml_path.name != 'errors.xml':
+        base += ['--xml', str(xml_path)]  # Compatibility for previously exported reports.
     if stdin_file:
         base += ['--stdin-file', stdin_file]
-    return {'base_args': base, 'target_args': target, 'source': source,
-            'ready': bool(target), 'note': ('已使用绝对路径并带入工程目录、原程序及参数。' if target else
-                '已带入绝对路径和工程目录；XML 未记录可执行程序，无法自动生成完整调试命令。'),
+    return {'cwd': cwd, 'project': project, 'base_args': base, 'target_args': target, 'source': source,
+            'ready': bool(target), 'note': ('已使用绝对程序路径和结果目录；运行目录与源码目录自动恢复或推导。' if target else
+                '已带入结果目录；XML 未记录可执行程序，无法自动生成完整调试命令。'),
             'cwd_note': '' if source == 'collection' else '原 XML 未记录工作目录，使用工程目录（未提供时使用 XML 所在目录）。'}

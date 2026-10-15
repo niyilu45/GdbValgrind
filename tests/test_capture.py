@@ -822,7 +822,8 @@ class CaptureTests(unittest.TestCase):
                                 capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b'--auto-values', result.stdout)
-        self.assertIn(b'--capture-dir', result.stdout)
+        self.assertIn(b'--retPath', result.stdout)
+        self.assertNotIn(b'--capture-dir', result.stdout)
 
     def value_type(self, code=1, size=4, **kwargs):
         t = SimpleNamespace(code=code, sizeof=size, **kwargs)

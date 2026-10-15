@@ -41,8 +41,7 @@ class CommandTests(unittest.TestCase):
             metadata = json.loads(payload.group(1))['debug_command']
             self.assertEqual(metadata['base_args'], [
                 str(Path(sys.executable).resolve()), str(library / 'main.py'),
-                '--action', 'debug', '--xml', str(xml.resolve()), '--project-dir', str(project.resolve()),
-                '--cwd', str(project.resolve())])
+                '--action', 'debug', '--retPath', str(output.resolve())])
             self.assertEqual(metadata['target_args'], [str(project / 'build/app')])
             from main import ArgParser
             target = metadata['target_args'] + ['--mode', 'target-mode', 'two words', "don't", '']
@@ -69,9 +68,10 @@ class CommandTests(unittest.TestCase):
             self.assertFalse(report['xml_complete'])
             self.assertEqual(meta['target_args'], [str(project / 'build/my app'), 'a b', "don't", ''])
             args = meta['base_args']
-            for value in args[:2] + [args[5], args[7], args[9]]:
+            for value in args[:2] + [args[5]]:
                 self.assertTrue(Path(value).is_absolute(), value)
-            self.assertEqual(args[6:10], ['--project-dir', str(project), '--cwd', str(project)])
+            self.assertNotIn('--cwd', args)
+            self.assertNotIn('--project-dir', args)
             self.assertNotIn('./your_program', render_html(report))
 
     def test_collection_metadata_preserves_workdir_and_stdin(self):
@@ -84,7 +84,8 @@ class CommandTests(unittest.TestCase):
             meta = load_report(xml, directory)['debug_command']
             self.assertEqual(meta['source'], 'collection')
             self.assertEqual(meta['target_args'], ['/srv/my project/app', 'input.txt'])
-            self.assertEqual(meta['base_args'][-4:], ['--cwd', '/srv/my project', '--stdin-file', '/srv/my project/stdin.txt'])
+            self.assertEqual(meta['cwd'], '/srv/my project')
+            self.assertEqual(meta['base_args'][-2:], ['--stdin-file', '/srv/my project/stdin.txt'])
 
     def test_invalid_or_unrelated_metadata_does_not_break_report(self):
         with tempfile.TemporaryDirectory() as directory:

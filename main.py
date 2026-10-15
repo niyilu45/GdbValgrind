@@ -58,10 +58,10 @@ def ArgParser(argv=None):
     actions = ('collect', 'report', 'analyze', 'summary', 'serve', 'debug', 'refresh-captures', 'browse', 'auto-values')
     parser.add_argument('--action', choices=actions, help='要执行的功能，例如 analyze；兼容旧子命令写法')
     # Stop interpreting tool options at the target command boundary.
-    boundary = next((i for i, value in enumerate(argv) if value in ('--command', '--')), len(argv))
+    boundary = next((i for i, value in enumerate(argv) if value in ('--progPath', '--command', '--')), len(argv))
     command = argv[boundary + 1:] if boundary < len(argv) else []
-    if boundary < len(argv) and argv[boundary] == '--command' and not command:
-        parser.error('--command 后必须提供目标程序及其参数')
+    if boundary < len(argv) and argv[boundary] in ('--progPath', '--command') and not command:
+        parser.error('--progPath 后必须提供目标程序及其参数')
     argv = argv[:boundary]
     action_options = [i for i, value in enumerate(argv) if value == '--action' or value.startswith('--action=')]
     if len(action_options) > 1:
@@ -88,48 +88,50 @@ def ArgParser(argv=None):
         argv.insert(1, '--xml')
     sub = parser.add_subparsers(dest="action", required=True)
     refresh = sub.add_parser('refresh-captures', help='更新已有 full-report.html 的变量关联与筛选，不重新运行程序')
-    refresh.add_argument('--output-dir', type=Path, required=True, help='包含 full-report.html 和 capture-updates.js 的结果目录')
+    refresh.add_argument('--retPath', dest='output_dir', type=Path, help='包含 full-report.html 和 capture-updates.js 的结果目录')
     analyze = sub.add_parser('analyze', help='一条命令生成报告并启动自动变量采集；也可复用已有 XML')
-    analyze.add_argument('--xml', type=Path, help='已有 XML，可不完整；省略则首次运行采集')
-    analyze.add_argument('--output-dir', type=Path, required=True, help='结果目录；可复用，只清理清单登记的旧输出')
-    analyze.add_argument('--project-dir', '-p', type=Path)
-    analyze.add_argument('--cwd', type=Path)
+    analyze.add_argument('--from-xml', action='store_true', help='使用结果目录中的 errors.xml，生成 HTML 并分析变量')
+    analyze.add_argument('--xml', type=Path, help=argparse.SUPPRESS)
+    analyze.add_argument('--retPath', dest='output_dir', type=Path, help='结果目录；可复用，只清理清单登记的旧输出')
+    analyze.add_argument('--project-dir', '-p', type=Path, help=argparse.SUPPRESS)
+    analyze.add_argument('--cwd', type=Path, help=argparse.SUPPRESS)
     analyze.add_argument('--stdin-file', type=Path)
     analyze.add_argument('--port', type=int, default=8765, help='首次采集实时网页端口，0 为自动选择')
     analyze.add_argument('--no-web', action='store_true', help='关闭首次采集实时网页')
     analyze.add_argument('--pause-on-error', action='store_true', help='保存现场后暂停，进入交互式 GDB；默认自动继续至程序结束')
-    analyze.add_argument('--step3-only', action='store_true', help='使用 --xml 或 --base-report 跳过步骤一、二，采集变量并更新 full-report.html')
-    analyze.add_argument('--base-report', type=Path, help='步骤二 HTML，默认读取 XML 同目录的 report.html')
+    analyze.add_argument('--step3-only', action='store_true', help='使用结果目录的 errors.xml 和 report.html，跳过步骤一、二，更新变量分析')
+    analyze.add_argument('--base-report', type=Path, help=argparse.SUPPRESS)
     collect = sub.add_parser('collect', help='首次运行 Valgrind，实时统计并保留中断结果')
-    collect.add_argument('--output-dir', type=Path, required=True, help='采集目录；可复用，只清理清单登记的旧输出')
+    collect.add_argument('--retPath', dest='output_dir', type=Path, help='采集目录；可复用，只清理清单登记的旧输出')
     collect.add_argument('--report', action='store_true', help='检测结束后生成完整 report.html，不启动变量采集')
     collect.add_argument('--workers', type=int, choices=range(1,9), default=4)
-    collect.add_argument('--cwd', type=Path)
+    collect.add_argument('--cwd', type=Path, help=argparse.SUPPRESS)
     collect.add_argument('--stdin-file', type=Path)
     collect.add_argument('--interval', type=float, default=1.0)
     collect.add_argument('--port', type=int, default=8765, help='实时网页端口，0 为自动选择')
     collect.add_argument('--no-web', action='store_true', help='关闭实时网页')
-    collect.add_argument('--project-dir', '-p', type=Path)
+    collect.add_argument('--project-dir', '-p', type=Path, help=argparse.SUPPRESS)
     for command_parser in (collect, analyze):
         command_parser.add_argument('--plain-terminal', action='store_true', help='关闭固定状态区，用于定位终端卡顿')
         command_parser.add_argument('--output-mode', choices=('pty', 'file'), default='pty', help='程序输出方式；file 绕过伪终端')
     for name, help_text in (("summary", "显示已保存或被中断 XML 的统计"), ("report", "XML 转为离线 HTML"), ("serve", "网页浏览和启动联合调试"), ("debug", "按错误 ID 启动联合调试")):
         p = sub.add_parser(name, help=help_text)
-        p.add_argument("--xml", type=Path, required=True, help="输入 XML 错误报告")
-        p.add_argument("--project-dir", "-p", type=Path, help="工程根目录，嵌入上下各 10 行源码")
+        p.add_argument("--xml", type=Path, help=argparse.SUPPRESS)
+        p.add_argument("--project-dir", "-p", type=Path, help=argparse.SUPPRESS)
         p.add_argument('--strict-xml', action='store_true', help='要求 XML 完整闭合；默认恢复已完整写出的记录')
+        p.add_argument("--retPath", type=Path, help="结果目录，固定读取 errors.xml")
         if name == "report":
-            p.add_argument("--output", "-o", type=Path, default=Path("report.html"))
+            p.add_argument("--output", "-o", type=Path, default=Path("report.html"), help=argparse.SUPPRESS)
             p.add_argument('--workers',type=int,choices=range(1,9),default=4,help='源码/blame 并发数，1–8，默认 4')
         if name == "serve":
             p.add_argument("--port", type=int, default=8765)
             p.add_argument("--open", action="store_true")
         if name in ("serve", "debug"):
-            p.add_argument("--cwd", type=Path, help="被调试程序工作目录，默认当前目录")
+            p.add_argument("--cwd", type=Path, help=argparse.SUPPRESS)
             p.add_argument("--stdin-file", type=Path, help="将文件作为目标程序标准输入（默认 /dev/null）")
             p.add_argument("--stop-on-error", action="store_true", help="同时在新运行的每个 Valgrind 错误处停下（包括其他错误）")
             p.add_argument("--auto-values", action="store_true", help="在实际内存错误处自动提取参数/局部变量并保存现场；跳过源码断点")
-            p.add_argument("--capture-dir", type=Path, default=Path("captures"), help="自动采集输出目录，默认 captures，每次调试新建会话目录")
+            p.add_argument("--capture-dir", type=Path, default=Path("captures"), help=argparse.SUPPRESS)
             p.set_defaults(frame=None)
         if name == "debug":
             p.add_argument("--error", required=True, help="HTML 中的错误 ID")
@@ -137,19 +139,61 @@ def ArgParser(argv=None):
     for mode_parser in (analyze, collect, sub.choices['report'], sub.choices['serve'], sub.choices['debug']):
         mode_parser.add_argument('--mode', choices=('fast', 'full'), default='full',
                                  help='fast: 当前行变量；full: 额外采集作用域变量（默认）；无变量采集时两种模式行为相同')
-    for target_parser in (collect, analyze, sub.choices['serve'], sub.choices['debug']):
-        target_parser.add_argument('--command', nargs=argparse.REMAINDER,
+    for target_parser in (collect, analyze, sub.choices['report'], sub.choices['serve'], sub.choices['debug']):
+        target_parser.add_argument('--progPath', nargs=argparse.REMAINDER,
                                   help='目标程序及其全部参数；必须放在工具参数最后，后续参数原样传递')
+    for legacy_parser in (collect, analyze, refresh):
+        legacy_parser.add_argument('--output-dir', dest='output_dir', type=Path, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    # Ignore known but irrelevant options, without hiding misspelled names.
+    action_parser = sub.choices.get(argv[0]) if argv else None
+    if action_parser:
+        known = {key: option for child in sub.choices.values()
+                 for key, option in child._option_string_actions.items()}
+        filtered, index = [argv[0]], 1
+        while index < len(argv):
+            value = argv[index]
+            name = value.split('=', 1)[0]
+            if name in known and name not in action_parser._option_string_actions:
+                option = known[name]
+                print('警告：当前 action 不需要 ' + name + '，已忽略。', file=sys.stderr)
+                index += 1
+                if '=' not in value and option.nargs != 0 and index < len(argv) and not argv[index].startswith('--'):
+                    index += 1
+                continue
+            filtered.append(value)
+            index += 1
+        argv = filtered
     args = parser.parse_args(argv)
-    if command and args.action not in ('collect', 'analyze', 'serve', 'debug'):
-        parser.error('该功能不执行目标程序，不接受 --command')
+    if args.action in ('collect', 'analyze', 'refresh-captures') and args.output_dir is None:
+        parser.error('请提供 --retPath 结果目录')
+    if command and args.action not in ('collect', 'analyze', 'report', 'serve', 'debug'):
+        print('警告：当前 action 不需要 --progPath，已忽略程序及其参数。', file=sys.stderr)
+        command = []
     args.command = command
+    result_dir = getattr(args, 'retPath', None)
+    if result_dir is not None:
+        args.xml = args.xml or result_dir / 'errors.xml'
+        if args.action == 'report':
+            args.output = result_dir / 'report.html'
+        if args.action in ('debug', 'serve'):
+            args.capture_dir = result_dir / 'captures'
+    if args.action in ('report', 'summary', 'serve', 'debug') and args.xml is None:
+        parser.error('请提供 --retPath，目录中应包含 errors.xml')
+    if args.action == 'analyze':
+        if args.from_xml and args.step3_only:
+            parser.error('--from-xml 与 --step3-only 不能同时使用')
+        if args.from_xml or (args.step3_only and not args.base_report):
+            args.xml = args.xml or args.output_dir / 'errors.xml'
+        if args.step3_only:
+            args.base_report = args.base_report or args.output_dir / 'report.html'
     return args
 
 
 def AiValgrind(args):
-    command = args.command
     try:
+        from inc.runtime_paths import configure_paths
+        configure_paths(args)
+        command = args.command
         if args.action == 'refresh-captures':
             refresh_report = getattr(workflow, 'refresh_capture_report', None)
             if not callable(refresh_report):
@@ -187,8 +231,6 @@ def AiValgrind(args):
             print_summary(summary_data(report))
             return 0
         if args.action == "report":
-            if command:
-                raise ValueError("report 不执行程序；请使用 debug 或 serve")
             if args.output.resolve() == args.xml.resolve():
                 raise ValueError("输出文件不能覆盖输入 XML")
             print('正在生成并保存 HTML 报告……', flush=True)

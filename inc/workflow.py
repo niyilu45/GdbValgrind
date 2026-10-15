@@ -126,7 +126,7 @@ def analyze_run(command, output_dir, *, xml_path=None, project_dir=None, cwd=Non
         if not command:
             command = metadata['target_args']
         base = metadata['base_args']
-        cwd = cwd or base[base.index('--cwd') + 1]
+        cwd = cwd or metadata.get('cwd') or (base[base.index('--cwd') + 1] if '--cwd' in base else None)
         if stdin_file is None and '--stdin-file' in base:
             stdin_file = base[base.index('--stdin-file') + 1]
     if not command:

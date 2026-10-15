@@ -91,6 +91,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
     (directory / 'run.json').write_text(json.dumps({
         'schema': 1, 'xml_file': xml_path.name,
         'precision': precision,
+        'project_dir': str(Path(project_dir).resolve()) if project_dir else None,
         'command': [str(executable.resolve())] + list(command[1:]),
         'cwd': str(workdir), 'stdin_file': str(Path(stdin_file).resolve()) if stdin_file else None,
     }, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -141,9 +142,7 @@ def collect_run(command, output_dir, *, cwd=None, stdin_file=None, interval=1.0,
             store.commit()
         if force:
             command = [sys.executable, str(Path(__file__).resolve().parents[1] / 'main.py'),
-                       '--action', 'report', '--xml', str(xml_path), '--output', str(directory / 'full-report.html')]
-            if project_dir:
-                command += ['--project-dir', str(Path(project_dir).resolve())]
+                       '--action', 'report', '--retPath', str(directory)]
             stats = '\n'.join('%s: %s' % (kind, values) for kind, values in summary['kinds'].items())
             content = '<!doctype html><meta charset="utf-8"><title>AiValgrind</title><h1>AiValgrind</h1><p>\u91c7\u96c6\u6458\u8981\uff08\u4e0d\u662f\u5b8c\u6574\u62a5\u544a\uff09</p><pre>' + html.escape(stats) + '</pre><p>\u8be6\u60c5\u5df2\u4fdd\u5b58\u5728 errors.xml \u548c results.sqlite3\u3002\u8bf7\u5728 Linux / SSH \u7ec8\u7aef\u6267\u884c\u4ee5\u4e0b\u547d\u4ee4\u5bfc\u51fa\u5b8c\u6574\u79bb\u7ebf\u62a5\u544a\uff1a</p><pre>' + html.escape(shlex.join(command)) + '</pre>'
             saved = directory / 'report.html.tmp'
