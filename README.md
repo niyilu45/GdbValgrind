@@ -32,17 +32,23 @@ python3.9 main.py --action analyze --mode fast --retPath /tmp/results --progPath
 
 ## 五种场景命令速查
 
-以下快速、完整命令二选一。将程序路径与结果目录替换为实际值，`arg1` 替换成程序参数或删除。
+以下每个场景均给出快速、完整两条完整命令，二选一执行。所有示例统一使用 `--progPath` 和 `--retPath`，不需要再填写 `--cwd`、`--project-dir`、`--xml`、`--base-report` 或 `--output`。
 
-| 场景 | 目标程序运行次数 | 查看结果 |
-| --- | --- | --- |
-| 1. 运行程序，生成 HTML | 1 次 | `report.html` |
-| 2. 已有 XML，生成 HTML | 0 次 | `report.html` |
-| 3. 运行程序，生成 HTML 并分析变量 | 通常 2 次 | `full-report.html` |
-| 4. 已有 HTML，更新变量分析 | 重跑 1 次 | `full-report.html` |
-| 5. 已有 XML，生成 HTML 并分析变量 | 重跑 1 次 | `full-report.html` |
+示例约定：程序为 `/work/project/build/app`，结果目录为 `/tmp/results`。`arg1` 是目标程序的示例参数，请替换为实际参数；没有参数就删除它。`--progPath` 以及程序参数必须放在整条命令最后。场景二中的程序路径只帮助查找源码，不执行程序。
+
+| 场景 | action 与附加开关 | 运行前需要的结果文件 | 目标程序运行次数 | 查看结果 |
+| --- | --- | --- | --- | --- |
+| 1. 运行程序，生成 HTML | `collect --report` | 无 | 1 次 | `/tmp/results/report.html` |
+| 2. 已有 XML，生成 HTML | `report` | `errors.xml` | 0 次 | `/tmp/results/report.html` |
+| 3. 运行程序，生成 HTML 并分析变量 | `analyze` | 无 | 通常 2 次 | `/tmp/results/full-report.html` |
+| 4. 已有 HTML，更新变量分析 | `analyze --step3-only` | `errors.xml` 和 `report.html` | 重跑 1 次 | `/tmp/results/full-report.html` |
+| 5. 已有 XML，生成 HTML 并分析变量 | `analyze --from-xml` | `errors.xml` | 重跑 1 次 | `/tmp/results/full-report.html` |
+
+`run.json` 是可选的原运行记录；存在且属于同一程序时用于恢复原目录和输入信息。场景四不能只保留 HTML，必须同时保留同一次检测的 XML。
 
 ### 场景一：运行程序，生成 HTML
+
+**准备：** 目标程序可运行；不需要已有 XML 或 HTML。
 
 ```bash
 # 快速模式
@@ -51,22 +57,24 @@ python3.9 main.py --action collect --report --mode fast --retPath /tmp/results -
 python3.9 main.py --action collect --report --mode full --retPath /tmp/results --progPath /work/project/build/app arg1
 ```
 
-检测结束后生成完整 `report.html`，不启动 GDB。运行期间也提供实时网页。中途退出后可使用场景二处理已保存 XML。
+**执行与结果：** 运行一次程序，生成 `errors.xml`、`run.json` 和完整 `report.html`，不启动 GDB，不生成新的变量分析。`--report` 不要省略，否则只保留采集摘要。运行期间也提供实时网页；中途退出后用场景二处理已保存 XML。
 
 ### 场景二：已有 XML，生成 HTML
 
-把原 XML 保存为 `/tmp/results/errors.xml`。
+**准备：** 把原 XML 保存为 `/tmp/results/errors.xml`，无需已有 HTML。
 
 ```bash
 # 快速模式
-python3.9 main.py --action report --mode fast --retPath /tmp/results
+python3.9 main.py --action report --mode fast --retPath /tmp/results --progPath /work/project/build/app
 # 完整模式
-python3.9 main.py --action report --mode full --retPath /tmp/results
+python3.9 main.py --action report --mode full --retPath /tmp/results --progPath /work/project/build/app
 ```
 
-生成同目录 `report.html`，不运行程序，不需要 GDB。可选追加 `--progPath /work/project/build/app` 帮助定位源码，report 不执行它。
+**执行与结果：** 读取固定的 `errors.xml`，生成同目录 `report.html`，不运行程序、不需要 GDB。这里 `--progPath` 仅帮助推导源码目录；不需要源码或已有记录能定位源码时，可以省略。两种模式在此场景行为相同，不会仅凭 XML 产生变量值。
 
 ### 场景三：运行程序，生成 HTML，然后更新变量分析
+
+**准备：** 目标程序可重跑，Linux 上具备 Valgrind 和启用 Python 的 GDB。不需要已有结果文件。
 
 ```bash
 # 快速模式
@@ -75,11 +83,11 @@ python3.9 main.py --action analyze --mode fast --retPath /tmp/results --progPath
 python3.9 main.py --action analyze --mode full --retPath /tmp/results --progPath /work/project/build/app arg1
 ```
 
-执行“首次检测 → 生成 `report.html` → 重跑采集变量”。即使结果目录已有 XML，此命令仍重新检测；程序通常运行两次，文件写入等副作用也会重复执行。无错误时跳过变量采集。
+**执行与结果：** 首次检测生成 `errors.xml`，随后生成 `report.html`，最后重跑采集变量并更新 `full-report.html`。即使结果目录已有 XML，此命令仍重新检测；程序通常运行两次，文件写入等副作用也会重复执行。无错误时跳过变量采集。
 
 ### 场景四：已有 HTML，更新变量分析
 
-结果目录需要有同一次检测生成的 `errors.xml` 和 `report.html`。
+**准备：** `/tmp/results` 中需要有同一次检测生成的 `errors.xml` 和 `report.html`，并准备原目标程序和复现参数。
 
 ```bash
 # 快速模式
@@ -88,11 +96,11 @@ python3.9 main.py --action analyze --step3-only --mode fast --retPath /tmp/resul
 python3.9 main.py --action analyze --step3-only --mode full --retPath /tmp/results --progPath /work/project/build/app arg1
 ```
 
-跳过首次检测和 HTML 重建。校验 XML 与 HTML 的错误列表一致后重跑程序，将变量更新到 `full-report.html`；原 `report.html` 不被改写。仅有 HTML 不能恢复历史现场。
+**执行与结果：** `--step3-only` 跳过首次检测和 HTML 重建。校验 XML 与 HTML 的错误列表一致后重跑程序，将变量更新到 `full-report.html`；原 `report.html` 不被改写。变量存入配套文件并显示在对应错误堆栈源码下方。仅有 HTML 不能恢复历史现场。
 
 ### 场景五：已有 XML，生成 HTML 并分析变量
 
-结果目录需要有 `errors.xml`，不需要提前生成 HTML。
+**准备：** `/tmp/results` 中需要有 `errors.xml`，不需要提前生成 HTML；准备原程序和复现参数。
 
 ```bash
 # 快速模式
@@ -101,7 +109,17 @@ python3.9 main.py --action analyze --from-xml --mode fast --retPath /tmp/results
 python3.9 main.py --action analyze --from-xml --mode full --retPath /tmp/results --progPath /work/project/build/app arg1
 ```
 
-跳过首次检测，先生成 `report.html`，再重跑程序采集变量，更新 `full-report.html`。支持不完整 XML 中已完整写出的错误。场景四、五有有效配套 `run.json` 时可以省略 `--progPath`，沿用原程序及其参数；没有运行记录时请显式填写。
+**执行与结果：** `--from-xml` 跳过首次检测，读取 `errors.xml` 并生成 `report.html`，再重跑程序采集变量，更新 `full-report.html`。支持不完整 XML 中已完整写出的错误。不要改成不带开关的 `analyze`，否则会重新进行首次检测；也不要改成 `--step3-only`，那会要求已有 HTML。
+
+场景四、五有有效配套 `run.json` 时可以省略 `--progPath`，沿用原程序及其参数；为避免复现参数不明确，上面的完整示例都显式给出程序路径。没有运行记录时请按示例填写。
+
+### 五种场景共同规则
+
+- 场景一、二的快速/完整模式均不采集变量；场景三、四、五按模式决定变量采集量。
+- 变量来自新运行，无法从旧 XML/HTML 还原历史变量值；无已记录错误时不进入变量采集。
+- 浏览 `full-report.html` 时保留同目录的 `capture-updates.js`、`capture-progress.js`；它们增量更新变量，页面不整页刷新。
+- 多填当前 action 不适用的已知参数只会警告并忽略。例如在 `report` 中多填 `--pause-on-error` 不会启动调试；参数应放在 `--progPath` 前，否则属于目标程序参数。
+- 示例中的路径和文件名区分大小写，尤其是 `--progPath`、`--retPath`；输入文件固定命名为 `errors.xml` 和 `report.html`。
 
 ## 快速模式与完整模式
 
