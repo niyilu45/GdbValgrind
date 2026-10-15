@@ -4,9 +4,11 @@
 
 ## 参数与固定文件名
 
-目录只需提供两项：
+路径与执行参数分别指定：
 
-- `--progPath`：目标程序路径，后面可以带程序自己的全部参数。必须放在工具参数最后。
+- `--progPath`：目标程序所在目录，例如 `/work/project/build`。
+- `--exeName`：该目录下的可执行文件名，例如 `app`，不包含目录。
+- `--exeArgs`：目标程序自己的参数，必须放在工具参数最后；程序无参数时省略。
 - `--retPath`：结果目录，输入和输出都放在这里。
 
 | 固定名称 | 用途 |
@@ -23,18 +25,18 @@
 目标程序的相对参数路径按运行工作目录解释。例如程序位于 `/work/project/build/app`，`--config config.json` 默认读取 `/work/project/build/config.json`。建议给配置、输入等目标程序参数使用绝对路径。
 
 ```bash
-python3.9 main.py --action analyze --mode fast --retPath /tmp/results --progPath "/work/project/build/my app" --config "/work/project/configs/test case.json" --mode production --count 26
+python3.9 main.py --action analyze --mode fast --retPath /tmp/results --progPath "/work/project/build" --exeName "my app" --exeArgs --config "/work/project/configs/test case.json" --mode production --count 26
 ```
 
 `--mode fast` 属于工具，`--mode production` 属于目标程序。参数逐项原样传递，含空格的参数需加 Shell 引号，不要把整条目标命令包成一个字符串。
 
-当前 action 不需要的已知参数会警告并忽略，不中止执行；无法识别的参数名仍报错，避免拼写错误被静默忽略。`--progPath` 后的内容不按工具参数解析。
+当前 action 不需要的已知参数会警告并忽略，不中止执行；无法识别的参数名仍报错，避免拼写错误被静默忽略。`--exeArgs` 后的内容不按工具参数解析。
 
 ## 五种场景命令速查
 
-以下每个场景均给出快速、完整两条完整命令，二选一执行。所有示例统一使用 `--progPath` 和 `--retPath`，不需要再填写 `--cwd`、`--project-dir`、`--xml`、`--base-report` 或 `--output`。
+以下每个场景均给出快速、完整两条完整命令，二选一执行。所有示例统一使用 `--progPath`、`--exeName`、`--exeArgs` 和 `--retPath`，不需要再填写 `--cwd`、`--project-dir`、`--xml`、`--base-report` 或 `--output`。
 
-示例约定：程序为 `/work/project/build/app`，结果目录为 `/tmp/results`。`arg1` 是目标程序的示例参数，请替换为实际参数；没有参数就删除它。`--progPath` 以及程序参数必须放在整条命令最后。场景二中的程序路径只帮助查找源码，不执行程序。
+示例约定：程序为 `/work/project/build/app`，结果目录为 `/tmp/results`。`arg1` 是目标程序的示例参数，请替换为实际参数；没有参数就删除它。`--progPath` 和 `--exeName` 必须一起提供；`--exeArgs` 及其后的程序参数必须放在整条命令最后。场景二中的程序路径只帮助查找源码，不执行程序。
 
 | 场景 | action 与附加开关 | 运行前需要的结果文件 | 目标程序运行次数 | 查看结果 |
 | --- | --- | --- | --- | --- |
@@ -52,9 +54,9 @@ python3.9 main.py --action analyze --mode fast --retPath /tmp/results --progPath
 
 ```bash
 # 快速模式
-python3.9 main.py --action collect --report --mode fast --retPath /tmp/results --progPath /work/project/build/app arg1
+python3.9 main.py --action collect --report --mode fast --retPath /tmp/results --progPath /work/project/build --exeName app --exeArgs arg1
 # 完整模式
-python3.9 main.py --action collect --report --mode full --retPath /tmp/results --progPath /work/project/build/app arg1
+python3.9 main.py --action collect --report --mode full --retPath /tmp/results --progPath /work/project/build --exeName app --exeArgs arg1
 ```
 
 **执行与结果：** 运行一次程序，生成 `errors.xml`、`run.json` 和完整 `report.html`，不启动 GDB，不生成新的变量分析。`--report` 不要省略，否则只保留采集摘要。运行期间也提供实时网页；中途退出后用场景二处理已保存 XML。
@@ -65,12 +67,12 @@ python3.9 main.py --action collect --report --mode full --retPath /tmp/results -
 
 ```bash
 # 快速模式
-python3.9 main.py --action report --mode fast --retPath /tmp/results --progPath /work/project/build/app
+python3.9 main.py --action report --mode fast --retPath /tmp/results --progPath /work/project/build --exeName app
 # 完整模式
-python3.9 main.py --action report --mode full --retPath /tmp/results --progPath /work/project/build/app
+python3.9 main.py --action report --mode full --retPath /tmp/results --progPath /work/project/build --exeName app
 ```
 
-**执行与结果：** 读取固定的 `errors.xml`，生成同目录 `report.html`，不运行程序、不需要 GDB。这里 `--progPath` 仅帮助推导源码目录；不需要源码或已有记录能定位源码时，可以省略。两种模式在此场景行为相同，不会仅凭 XML 产生变量值。
+**执行与结果：** 读取固定的 `errors.xml`，生成同目录 `report.html`，不运行程序、不需要 GDB。这里 `--progPath` 与 `--exeName` 仅帮助推导源码目录；不需要源码或已有记录能定位源码时，可以同时省略。两种模式在此场景行为相同，不会仅凭 XML 产生变量值。
 
 ### 场景三：运行程序，生成 HTML，然后更新变量分析
 
@@ -78,9 +80,9 @@ python3.9 main.py --action report --mode full --retPath /tmp/results --progPath 
 
 ```bash
 # 快速模式
-python3.9 main.py --action analyze --mode fast --retPath /tmp/results --progPath /work/project/build/app arg1
+python3.9 main.py --action analyze --mode fast --retPath /tmp/results --progPath /work/project/build --exeName app --exeArgs arg1
 # 完整模式
-python3.9 main.py --action analyze --mode full --retPath /tmp/results --progPath /work/project/build/app arg1
+python3.9 main.py --action analyze --mode full --retPath /tmp/results --progPath /work/project/build --exeName app --exeArgs arg1
 ```
 
 **执行与结果：** 首次检测生成 `errors.xml`，随后生成 `report.html`，最后重跑采集变量并更新 `full-report.html`。即使结果目录已有 XML，此命令仍重新检测；程序通常运行两次，文件写入等副作用也会重复执行。无错误时跳过变量采集。
@@ -91,9 +93,9 @@ python3.9 main.py --action analyze --mode full --retPath /tmp/results --progPath
 
 ```bash
 # 快速模式
-python3.9 main.py --action analyze --step3-only --mode fast --retPath /tmp/results --progPath /work/project/build/app arg1
+python3.9 main.py --action analyze --step3-only --mode fast --retPath /tmp/results --progPath /work/project/build --exeName app --exeArgs arg1
 # 完整模式
-python3.9 main.py --action analyze --step3-only --mode full --retPath /tmp/results --progPath /work/project/build/app arg1
+python3.9 main.py --action analyze --step3-only --mode full --retPath /tmp/results --progPath /work/project/build --exeName app --exeArgs arg1
 ```
 
 **执行与结果：** `--step3-only` 跳过首次检测和 HTML 重建。校验 XML 与 HTML 的错误列表一致后重跑程序，将变量更新到 `full-report.html`；原 `report.html` 不被改写。变量存入配套文件并显示在对应错误堆栈源码下方。仅有 HTML 不能恢复历史现场。
@@ -104,21 +106,21 @@ python3.9 main.py --action analyze --step3-only --mode full --retPath /tmp/resul
 
 ```bash
 # 快速模式
-python3.9 main.py --action analyze --from-xml --mode fast --retPath /tmp/results --progPath /work/project/build/app arg1
+python3.9 main.py --action analyze --from-xml --mode fast --retPath /tmp/results --progPath /work/project/build --exeName app --exeArgs arg1
 # 完整模式
-python3.9 main.py --action analyze --from-xml --mode full --retPath /tmp/results --progPath /work/project/build/app arg1
+python3.9 main.py --action analyze --from-xml --mode full --retPath /tmp/results --progPath /work/project/build --exeName app --exeArgs arg1
 ```
 
 **执行与结果：** `--from-xml` 跳过首次检测，读取 `errors.xml` 并生成 `report.html`，再重跑程序采集变量，更新 `full-report.html`。支持不完整 XML 中已完整写出的错误。不要改成不带开关的 `analyze`，否则会重新进行首次检测；也不要改成 `--step3-only`，那会要求已有 HTML。
 
-场景四、五有有效配套 `run.json` 时可以省略 `--progPath`，沿用原程序及其参数；为避免复现参数不明确，上面的完整示例都显式给出程序路径。没有运行记录时请按示例填写。
+场景四、五有有效配套 `run.json` 时可以同时省略 `--progPath`、`--exeName`、`--exeArgs`，沿用原程序及其参数；为避免复现参数不明确，上面的完整示例都显式给出程序路径。没有运行记录时请按示例填写。
 
 ### 五种场景共同规则
 
 - 场景一、二的快速/完整模式均不采集变量；场景三、四、五按模式决定变量采集量。
 - 变量来自新运行，无法从旧 XML/HTML 还原历史变量值；无已记录错误时不进入变量采集。
 - 浏览 `full-report.html` 时保留同目录的 `capture-updates.js`、`capture-progress.js`；它们增量更新变量，页面不整页刷新。
-- 多填当前 action 不适用的已知参数只会警告并忽略。例如在 `report` 中多填 `--pause-on-error` 不会启动调试；参数应放在 `--progPath` 前，否则属于目标程序参数。
+- 多填当前 action 不适用的已知参数只会警告并忽略。例如在 `report` 中多填 `--pause-on-error` 不会启动调试；参数应放在 `--exeArgs` 前，否则属于目标程序参数。
 - 示例中的路径和文件名区分大小写，尤其是 `--progPath`、`--retPath`；输入文件固定命名为 `errors.xml` 和 `report.html`。
 
 ## 快速模式与完整模式
@@ -160,14 +162,14 @@ python3.9 main.py --action summary --retPath /tmp/results
 # 浏览报告
 python3.9 main.py --action serve --retPath /tmp/results
 # 手动调试报告中的错误
-python3.9 main.py --action debug --retPath /tmp/results --error ERROR_ID --progPath /work/project/build/app arg1
+python3.9 main.py --action debug --retPath /tmp/results --error ERROR_ID --progPath /work/project/build --exeName app --exeArgs arg1
 # 更新已有变量查看器，不重新运行目标
 python3.9 main.py --action refresh-captures --retPath /tmp/results
 ```
 
 网页生成的启动命令在同一 Linux 主机的普通终端执行；`aiv-goto` 等继续命令输入已有 `(gdb)` 会话。源码断点只定位调用路径，不证明已触发错误。刷新已有查看器后重新打开页面；缺失的现场数据需要重跑才能补采。
 
-结果目录可复用，只清理脚本清单登记的输出，保留无关文件。更新时同时复制 `main.py` 和整个 `inc/`。旧参数保留兼容，但新文档和网页统一使用 `progPath`、`retPath`。移动报告、源码或程序后需核对运行记录与调试符号路径。
+结果目录可复用，只清理脚本清单登记的输出，保留无关文件。更新时同时复制 `main.py` 和整个 `inc/`。旧 `--command` 写法保留兼容；旧版将程序完整路径放在 `--progPath` 后的写法需拆为目录和 `--exeName`。新文档和网页统一使用分离参数。移动报告、源码或程序后需核对运行记录与调试符号路径。
 
 ## Python 库与验证
 

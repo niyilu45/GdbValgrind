@@ -114,7 +114,7 @@ function detail(e){
  box.append(el('p','启动命令：粘贴到 Linux / SSH 终端的普通 Shell 中执行，不要粘贴到 (gdb)。'));
  const command=el('textarea');command.readOnly=true;command.setAttribute('aria-label','终端调试命令');command.hidden=true;const copy=el('button','复制命令','secondary');copy.hidden=true;
  const metadata=report.debug_command;
- const updateCommand=()=>{if(!metadata?.ready){command.value='';return}const args=[...metadata.base_args,'--error',e.id,...(select.value?['--frame',select.value]:[]),'--progPath',...metadata.target_args];command.value=args.map(shellQuote).join(' ');};
+ const updateCommand=()=>{if(!metadata?.ready){command.value='';return}const args=[...metadata.base_args,'--error',e.id,...(select.value?['--frame',select.value]:[]),...(metadata.program_args||['--command',...metadata.target_args])];command.value=args.map(shellQuote).join(' ');};
  const resumeLabel=el('p','已有调试会话：复制下面的命令到当前 (gdb) 提示符中执行。');
  const resume=el('textarea');resume.readOnly=true;resume.setAttribute('aria-label','当前 GDB 会话继续命令');
  const updateResume=()=>{resume.value='aiv-goto '+e.id+(select.value?' '+select.value:'')};updateResume();

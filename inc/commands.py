@@ -52,7 +52,13 @@ def command_metadata(root, xml_path, project=None):
         base += ['--xml', str(xml_path)]  # Compatibility for previously exported reports.
     if stdin_file:
         base += ['--stdin-file', stdin_file]
-    return {'cwd': cwd, 'project': project, 'base_args': base, 'target_args': target, 'source': source,
+    program_args = []
+    if target:
+        path_module = ntpath if ntpath.splitdrive(target[0])[0] else posixpath
+        program_args = ['--progPath', path_module.dirname(target[0]), '--exeName', path_module.basename(target[0])]
+        if len(target) > 1:
+            program_args += ['--exeArgs'] + target[1:]
+    return {'program_args': program_args, 'cwd': cwd, 'project': project, 'base_args': base, 'target_args': target, 'source': source,
             'ready': bool(target), 'note': ('已使用绝对程序路径和结果目录；运行目录与源码目录自动恢复或推导。' if target else
                 '已带入结果目录；XML 未记录可执行程序，无法自动生成完整调试命令。'),
             'cwd_note': '' if source == 'collection' else '原 XML 未记录工作目录，使用工程目录（未提供时使用 XML 所在目录）。'}

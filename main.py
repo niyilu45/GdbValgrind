@@ -58,10 +58,12 @@ def ArgParser(argv=None):
     actions = ('collect', 'report', 'analyze', 'summary', 'serve', 'debug', 'refresh-captures', 'browse', 'auto-values')
     parser.add_argument('--action', choices=actions, help='要执行的功能，例如 analyze；兼容旧子命令写法')
     # Stop interpreting tool options at the target command boundary.
-    boundary = next((i for i, value in enumerate(argv) if value in ('--progPath', '--command', '--')), len(argv))
-    command = argv[boundary + 1:] if boundary < len(argv) else []
-    if boundary < len(argv) and argv[boundary] in ('--progPath', '--command') and not command:
-        parser.error('--progPath 后必须提供目标程序及其参数')
+    boundary = next((i for i, value in enumerate(argv) if value in ('--exeArgs', '--command', '--')), len(argv))
+    marker = argv[boundary] if boundary < len(argv) else None
+    trailing = argv[boundary + 1:] if marker else []
+    command = trailing if marker in ('--command', '--') else []
+    if marker == '--command' and not command:
+        parser.error('--command 后必须提供目标程序及其参数')
     argv = argv[:boundary]
     action_options = [i for i, value in enumerate(argv) if value == '--action' or value.startswith('--action=')]
     if len(action_options) > 1:
@@ -140,8 +142,9 @@ def ArgParser(argv=None):
         mode_parser.add_argument('--mode', choices=('fast', 'full'), default='full',
                                  help='fast: 当前行变量；full: 额外采集作用域变量（默认）；无变量采集时两种模式行为相同')
     for target_parser in (collect, analyze, sub.choices['report'], sub.choices['serve'], sub.choices['debug']):
-        target_parser.add_argument('--progPath', nargs=argparse.REMAINDER,
-                                  help='目标程序及其全部参数；必须放在工具参数最后，后续参数原样传递')
+        target_parser.add_argument('--progPath', type=Path, help='目标程序所在目录')
+        target_parser.add_argument('--exeName', help='progPath 目录下的可执行文件名')
+        target_parser.add_argument('--exeArgs', nargs=argparse.REMAINDER, help='目标程序参数；放在工具参数最后，后续内容原样传递')
     for legacy_parser in (collect, analyze, refresh):
         legacy_parser.add_argument('--output-dir', dest='output_dir', type=Path, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     # Ignore known but irrelevant options, without hiding misspelled names.
@@ -169,6 +172,21 @@ def ArgParser(argv=None):
     if command and args.action not in ('collect', 'analyze', 'report', 'serve', 'debug'):
         print('警告：当前 action 不需要 --progPath，已忽略程序及其参数。', file=sys.stderr)
         command = []
+    program_dir = getattr(args, 'progPath', None)
+    exe_name = getattr(args, 'exeName', None)
+    if args.action in ('collect', 'analyze', 'report', 'serve', 'debug'):
+        if command and (program_dir is not None or exe_name is not None or marker == '--exeArgs'):
+            parser.error('不可混用旧 --command 和 --progPath/--exeName/--exeArgs')
+        if program_dir is not None or exe_name is not None:
+            if program_dir is None or not exe_name:
+                parser.error('--progPath 和 --exeName 必须一起提供')
+            if exe_name in ('.', '..') or '/' in exe_name or '\\' in exe_name or ':' in exe_name:
+                parser.error('--exeName 只能是文件名，目录请放入 --progPath')
+            command = [str(program_dir.resolve() / exe_name)] + (trailing if marker == '--exeArgs' else [])
+        elif marker == '--exeArgs':
+            parser.error('--exeArgs 需要同时指定 --progPath 和 --exeName')
+    elif marker == '--exeArgs':
+        print('警告：当前 action 不需要 --exeArgs，已忽略。', file=sys.stderr)
     args.command = command
     result_dir = getattr(args, 'retPath', None)
     if result_dir is not None:
