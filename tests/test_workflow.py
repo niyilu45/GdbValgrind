@@ -44,7 +44,7 @@ class WorkflowTests(unittest.TestCase):
     def test_older_workflow_does_not_break_cli_import(self):
         import importlib
         import io
-        from inc import cli
+        import main as cli
         refresh = workflow.refresh_capture_report
         try:
             del workflow.refresh_capture_report
@@ -62,7 +62,7 @@ class WorkflowTests(unittest.TestCase):
             workflow.refresh_capture_report = refresh
 
     def test_refresh_upgrades_viewer_without_changing_captured_data(self):
-        from inc.cli import main
+        from main import main
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
             old = '<html><body><p>source</p><section id="capture-results">old</section><script>// aiv-stack-captures-v4</script></body></html>'

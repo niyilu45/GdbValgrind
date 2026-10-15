@@ -9,7 +9,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
-from inc import cli, core, DebugOptions
+import main as cli
+
+from inc import core, DebugOptions
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class AutomaticAnalyzeTests(unittest.TestCase):
     def test_both_entry_points_forward_pause_option(self):
         import main
-        for entry in (cli.main, main.main):
+        for entry in (main.main,):
             for pause in (False, True):
                 with self.subTest(entry=entry, pause=pause):
                     with patch.object(cli, 'analyze_run', return_value=0) as run, patch.object(cli, 'print_tool_versions'):

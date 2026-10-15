@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from inc import core as av
-from inc import cli
+import main as cli
 
 
 class CaptureTests(unittest.TestCase):

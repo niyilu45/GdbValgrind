@@ -170,7 +170,7 @@ analyze_run(["./build/app"], "/tmp/results", cwd="/work/project",
 #     command=["./build/app"], cwd="/work/project", auto_values=True, mode="full"))
 ```
 
-`main.py` 的 `main(argv)` 调用 `AiValgrind(ArgParser(argv))`。`ArgParser` 专门处理参数，`AiValgrind` 分发功能，两者实现在 `inc/cli.py`。`main.py` 还保留报告、浏览、调试等独立示例函数。
+`main.py` 的 `main(argv)` 调用 `AiValgrind(ArgParser(argv))`。`ArgParser` 专门处理参数，`AiValgrind` 分发功能，两者的完整实现均位于 `main.py`。`main.py` 还保留报告、浏览、调试等独立示例函数。
 
 库调用抛出异常，不直接退出宿主；导入库不会启动目标。相对路径按调用时工作目录解释。若输入相对于调用文件，请使用 `Path(__file__).resolve().parent / "errors.xml"`。网页调试入口始终来自实际加载的库所在目录中的 `main.py`，不受外部调用脚本的位置影响。移动工程、XML 或工具后应重新生成报告中的绝对路径命令。
 

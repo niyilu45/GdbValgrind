@@ -3,17 +3,24 @@ from unittest.mock import patch
 from pathlib import Path
 import tempfile
 
-from inc.cli import ArgParser, AiValgrind
+from main import ArgParser, AiValgrind
 from inc.api import DebugOptions, _arguments
 from inc.core import prepare_capture
 
 
 class ModeTests(unittest.TestCase):
+    def test_entry_functions_are_implemented_in_main(self):
+        import inspect
+        import main
+        for function in (main.ArgParser, main.AiValgrind):
+            self.assertEqual(Path(inspect.getsourcefile(function)).resolve(),
+                             Path(main.__file__).resolve())
+
     def test_parser_and_dispatch_forward_modes_and_target_arguments(self):
         for mode in ('fast', 'full'):
             args = ArgParser(['analyze', '--output-dir', 'results', '--mode', mode,
                               '--', './app', '--mode', 'target-option'])
-            with patch('inc.cli.print_tool_versions', return_value={}), patch('inc.cli.analyze_run', return_value=0) as run:
+            with patch('main.print_tool_versions', return_value={}), patch('main.analyze_run', return_value=0) as run:
                 self.assertEqual(AiValgrind(args), 0)
             self.assertEqual(run.call_args.kwargs['mode'], mode)
             self.assertEqual(run.call_args.args[0], ['./app', '--mode', 'target-option'])

@@ -10,7 +10,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from inc.processes import ProcessSession, interrupt_scope
-from inc import cli, core
+import main as cli
+from inc import core
 
 
 class ProcessTests(unittest.TestCase):

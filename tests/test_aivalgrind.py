@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from inc import core as av
-from inc import cli
+import main as cli
 
 
 def frame(ip="0x111", line=15, file="demo.c", fn="bad", directory="/old/project/src"):

@@ -21,7 +21,7 @@ class BootstrapTests(unittest.TestCase):
             caches = []
             for name, old in (
                 ('workflow.py', b'def analyze_run(*args, **kwargs): pass\n'),
-                ('cli.py', b'from .workflow import refresh_capture_report\n'),
+                ('api.py', b'from .workflow import refresh_capture_report\n'),
             ):
                 path = root / 'inc' / name
                 current = path.read_bytes()
@@ -33,7 +33,7 @@ class BootstrapTests(unittest.TestCase):
                 caches.append((cached, cached.read_bytes()))
                 path.write_bytes(current)
                 os.utime(path, (stamp, stamp))
-            broken = subprocess.run([sys.executable, '-c', 'import inc.cli'],
+            broken = subprocess.run([sys.executable, '-c', 'import inc'],
                                     cwd=root, capture_output=True, text=True, timeout=20)
             self.assertIn('cannot import name', broken.stderr)
             self.assertIn('refresh_capture_report', broken.stderr)

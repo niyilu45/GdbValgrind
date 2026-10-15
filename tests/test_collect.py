@@ -6,7 +6,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
-from inc import core, cli, export_report
+import main as cli
+from inc import core, export_report
 from inc.xmlstream import XMLStream
 from inc import collect as collection
 
