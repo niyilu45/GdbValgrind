@@ -28,7 +28,7 @@ class ErrorStore:
             CREATE INDEX kinds ON issues(kind);
             CREATE INDEX authors ON issues(author);
             CREATE INDEX enrichment_state ON issues(author_done,seq);
-            CREATE INDEX source_pending ON issues(author_done,retry_at,seq) WHERE author_done<2 AND attempts<3;
+            CREATE INDEX source_pending ON issues(author_done,retry_at,seq);
             CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT);
             CREATE TABLE rollups(kind TEXT,author TEXT,pending INTEGER,n INTEGER,
                 PRIMARY KEY(kind,author,pending));

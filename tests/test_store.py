@@ -1,5 +1,8 @@
 from contextlib import ExitStack
 import json
+import re
+import sqlite3
+from unittest.mock import patch
 import tempfile
 from pathlib import Path
 import unittest
@@ -11,6 +14,28 @@ from tests.test_aivalgrind import error, frame, xml
 
 
 class StoreTests(unittest.TestCase):
+    def test_schema_works_without_partial_index_support(self):
+        class LegacyConnection(sqlite3.Connection):
+            def executescript(self, sql):
+                if re.search(r'CREATE\s+INDEX[^;]+\bWHERE\b', sql, re.I):
+                    raise sqlite3.OperationalError('near "WHERE": syntax error')
+                return super().executescript(sql)
+        connect_native = sqlite3.connect
+        def legacy_connect(*args, **kwargs):
+            return connect_native(*args, factory=LegacyConnection, **kwargs)
+        with tempfile.TemporaryDirectory() as directory, patch('inc.store.sqlite3.connect', side_effect=legacy_connect):
+            store = ErrorStore(Path(directory) / 'results.sqlite3', 'errors.xml')
+            try:
+                for node in ET.fromstring(xml(error('1') + error('2', kind='InvalidRead'))).findall('error'):
+                    store.accept(node)
+                store.commit()
+                self.assertEqual(store.db.execute('SELECT count(*) FROM issues').fetchone()[0], 2)
+                self.assertEqual(store.db.execute('SELECT count(*) FROM issues WHERE author_done<2 AND attempts<3').fetchone()[0], 2)
+                store.db.execute('UPDATE issues SET attempts=3 WHERE seq=1')
+                self.assertEqual(store.db.execute('SELECT count(*) FROM issues WHERE author_done<2 AND attempts<3').fetchone()[0], 1)
+            finally:
+                store.close()
+
     def test_incremental_counts_and_dedup_match_offline(self):
         errors = error('1') + error('2',frames=frame(ip='0x999')) + error('1') + error('3',kind='InvalidRead')
         counts = '<pair><unique>1</unique><count>7</count></pair><pair><unique>2</unique><count>3</count></pair><pair><unique>3</unique><count>2</count></pair>'
